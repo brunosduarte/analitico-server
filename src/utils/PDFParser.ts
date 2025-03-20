@@ -138,6 +138,10 @@ const extractWorkData = (line: string): Trabalho | null => {
   const dia = diaFolhaMatch[1];
   // Folha inclui o número de 6 dígitos, um hífen e o número de 2 dígitos
   const folha = `${diaFolhaMatch[2]}-${diaFolhaMatch[3]}`;
+
+  // Variáveis para verificação de linhas adicionais que podem conter valores numéricos
+  let hasNumericValues = false;
+  let hasOpenParenthesis = false;
   
   // Dividir a linha em partes para extração dos demais campos
   const parts = cleanLine.split(/\s+/);
@@ -145,6 +149,16 @@ const extractWorkData = (line: string): Trabalho | null => {
   // Um trabalho válido deve ter pelo menos 12-15 partes
   if (parts.length < 12) {
     return null;
+  }
+  
+  // Verificar se a linha contém parênteses e números
+  hasOpenParenthesis = cleanLine.includes('(') && !cleanLine.includes(')');
+  hasNumericValues = parts.slice(-13).every(part => /^[\d.,]+$/.test(part));
+  
+  // Se tem parêntese aberto mas não tem fechado, e a linha tem valores numéricos,
+  // vamos tentar processar mesmo assim, assumindo que o parêntese é fechado na próxima linha
+  if (hasOpenParenthesis && hasNumericValues) {
+    console.log(`Linha com parêntese não fechado e valores numéricos: ${cleanLine}`);
   }
   
   // Identificar o operador portuário (tomador)
@@ -182,40 +196,88 @@ const extractWorkData = (line: string): Trabalho | null => {
   }
   
   // Determinar os índices dos campos após o tomador
-  // O próximo após o tomador é o início da pasta (nome do navio)
-  
   // Buscar o campo "fun" que é geralmente um número de 3 dígitos (101, 103, 801, 802, etc.)
   let funIndex = -1;
   
-  for (let i = tomadorEnd + 1; i < parts.length - 13; i++) {
-    if (/^\d{3}$/.test(parts[i])) {
-      funIndex = i;
+  // Determinar se há nomes de navio com parênteses como "BULK BOLIVIA (PORTO NOVO)"
+  let hasPortoNovo = false;
+  for (let i = tomadorEnd + 1; i < parts.length; i++) {
+    if (parts[i] === "(PORTO" && i + 1 < parts.length && parts[i + 1] === "NOVO)") {
+      hasPortoNovo = true;
       break;
     }
   }
   
-  // Se não encontrou o campo fun, temos que fazer uma estimativa
-  if (funIndex === -1) {
-    // Vamos procurar pelos últimos 13 números na linha (valores numéricos)
-    let numericCount = 0;
-    for (let i = parts.length - 1; i > tomadorEnd + 1; i--) {
-      if (/^[\d.,]+$/.test(parts[i])) {
-        numericCount++;
-        if (numericCount === 13) {
-          // 13 números encontrados, o fun deve estar antes
-          funIndex = i - 4; // Estimamos que fun, tur, ter, pagto ocupam 4 posições
+  // Verificar se há outros padrões de parênteses
+  let hasParentheses = false;
+  for (let i = tomadorEnd + 1; i < parts.length; i++) {
+    if (parts[i].includes('(') && !parts[i].includes(')')) {
+      hasParentheses = true;
+      break;
+    }
+  }
+  
+  // Procurar pelo campo "fun" após o tomador
+  for (let i = tomadorEnd + 1; i < parts.length - 13; i++) {
+    if (/^\d{3}$/.test(parts[i])) {
+      // Verificar se é realmente o campo "fun" e não parte de um valor numérico
+      // Se estivermos em um caso com parênteses, verificar com mais cuidado
+      if (hasPortoNovo || hasParentheses) {
+        // Verificar se os próximos valores parecem ser os campos tur, ter, pagto
+        const potentialTur = parts[i + 1] || '';
+        const potentialTer = parts[i + 2] || '';
+        const potentialPagto = parts[i + 3] || '';
+        
+        // Verificar se tur é uma letra
+        const isTurValid = /^[A-D]$/.test(potentialTur);
+        // Verificar se ter é um número de 1 a 3
+        const isTerValid = /^[1-3]$/.test(potentialTer);
+        // Verificar se pagto é uma data DD/MM
+        const isPagtoValid = /^\d{2}\/\d{2}$/.test(potentialPagto);
+        
+        // Se pelo menos dois desses parecem válidos, assumimos que encontramos o fun
+        if ((isTurValid && isTerValid) || (isTurValid && isPagtoValid) || (isTerValid && isPagtoValid)) {
+          funIndex = i;
           break;
         }
       } else {
-        // Se um número é quebrado, resetamos a contagem
+        // Se não estamos em um caso especial, podemos usar a lógica padrão
+        funIndex = i;
+        break;
+      }
+    }
+  }
+  
+  // Se não encontrou o campo fun, temos que fazer uma estimativa mais robusta
+  if (funIndex === -1) {
+    // Vamos encontrar a posição dos 13 valores numéricos no final da linha
+    let numericStartIdx = -1;
+    let numericCount = 0;
+    
+    for (let i = parts.length - 1; i >= tomadorEnd + 1; i--) {
+      if (/^[\d.,]+$/.test(parts[i])) {
+        numericCount++;
+        if (numericCount === 13) {
+          numericStartIdx = i - 12; // Índice do primeiro número
+          break;
+        }
+      } else {
+        // Se encontrarmos algo que não é um número, resetamos a contagem
         numericCount = 0;
       }
     }
     
-    // Se ainda não encontrou, usar uma estimativa baseada no tamanho da linha
-    if (funIndex === -1) {
-      // Estimar que os 13 valores numéricos + fun, tur, ter, pagto = 17 campos do final
-      funIndex = Math.max(tomadorEnd + 1, parts.length - 17);
+    if (numericStartIdx > 0) {
+      // Assumimos que os campos fun, tur, ter, pagto estão antes do primeiro valor numérico
+      funIndex = numericStartIdx - 4; // 4 campos antes dos valores numéricos
+      
+      // Validar se o funIndex faz sentido
+      if (funIndex <= tomadorEnd) {
+        funIndex = tomadorEnd + 1; // Fallback caso a estimativa seja inválida
+      }
+    } else {
+      // Se ainda não encontramos um padrão claro, usamos uma estimativa baseada na posição relativa
+      funIndex = Math.max(tomadorEnd + 1, parts.length - 17); // Assumindo que os últimos 17 itens são: fun, tur, ter, pagto + 13 valores
     }
   }
   
@@ -223,6 +285,17 @@ const extractWorkData = (line: string): Trabalho | null => {
   let pasta = '';
   for (let i = tomadorEnd + 1; i < funIndex; i++) {
     pasta += (pasta ? ' ' : '') + parts[i];
+  }
+  
+  // Se o nome do navio contém parênteses como "(PORTO NOVO)" mas está incompleto,
+  // verificar se precisa ajustar o nome
+  if (pasta.includes('(') && !pasta.includes(')')) {
+    if (pasta.includes('(PORTO')) {
+      pasta += ' NOVO)';
+    } else if (pasta.includes('(')) {
+      // Tentativa genérica de completar parênteses
+      pasta += ')';
+    }
   }
   
   // Agora extrair os campos fun, tur, ter, pagto
@@ -267,7 +340,7 @@ const extractWorkData = (line: string): Trabalho | null => {
     fgts: normalizeNumber(numericValues[12] || '0')
   };
   
-  // Valide o trabalho para garantir que não há valores NaN
+  // Validar o trabalho para garantir que não há valores NaN
   return validateTrabalho(trabalho);
 };
 
@@ -432,7 +505,40 @@ const extractSummary = (textContent: string[]): { folhasComplementos: ResumoExtr
   };
 };
 
-// Função para processar o PDF e extrair texto
+// Função auxiliar para encontrar nomes de navios incompletos e corrigir
+const processIncompleteShipNames = (textContent: string[]): string[] => {
+  const result: string[] = [];
+  let previousLine = '';
+  
+  for (let i = 0; i < textContent.length; i++) {
+    const currentLine = textContent[i].trim();
+    
+    // Verificar se a linha anterior tem um parêntese aberto mas não fechado
+    if (previousLine.includes('(') && !previousLine.includes(')') && 
+        currentLine.includes(')')) {
+      // Esta linha provavelmente contém a continuação do nome do navio
+      // Vamos combinar as linhas
+      const combinedLine = previousLine + ' ' + currentLine;
+      result.push(combinedLine);
+      previousLine = '';
+    } else {
+      // Linha normal, adicionar a anterior (se existir) e atualizar
+      if (previousLine) {
+        result.push(previousLine);
+      }
+      previousLine = currentLine;
+    }
+  }
+  
+  // Adicionar a última linha
+  if (previousLine) {
+    result.push(previousLine);
+  }
+  
+  return result;
+};
+
+// Função principal para processar o PDF e extrair texto
 export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
   return new Promise((resolve, reject) => {
     // Configuração do parser com opções específicas
@@ -497,8 +603,11 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
         
         console.log(`Total de linhas extraídas: ${textContent.length}`);
         
+        // Processar linhas para combinar nomes de navios incompletos
+        const processedTextContent = processIncompleteShipNames(textContent);
+        
         // Extrair informações do cabeçalho
-        const { matricula, nome, mes, ano, categoria } = extractHeader(textContent);
+        const { matricula, nome, mes, ano, categoria } = extractHeader(processedTextContent);
         
         console.log(`Dados de cabeçalho: ${matricula}, ${nome}, ${mes}/${ano}, ${categoria}`);
         
@@ -506,7 +615,7 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
         const trabalhos: Trabalho[] = [];
         
         // Processar cada linha para identificar trabalhos
-        for (const line of textContent) {
+        for (const line of processedTextContent) {
           // Verificar se a linha parece ser um registro de trabalho (começa com número)
           if (/^\d{1,2}\s+\d+/.test(line)) {
             try {
@@ -567,8 +676,8 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
             
             // Em alguns PDFs, os dados podem estar em uma estrutura de tabela
             // Vamos tentar identificar linhas de tabela pelo padrão de números e espaços
-            for (let i = 0; i < textContent.length; i++) {
-              const line = textContent[i];
+            for (let i = 0; i < processedTextContent.length; i++) {
+              const line = processedTextContent[i];
               
               // Linhas de trabalho geralmente têm vários números separados por espaços
               const numCount = (line.match(/\d+/g) || []).length;
@@ -596,7 +705,7 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
         let folhasComplementos: ResumoExtrato;
         let revisadas: ResumoExtrato;
         
-        const summaryData = extractSummary(textContent);
+        const summaryData = extractSummary(processedTextContent);
         
         if (!summaryData) {
           console.log('Calculando valores de resumo a partir dos trabalhos...');
