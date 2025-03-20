@@ -1,3 +1,4 @@
+
 import * as fs from 'fs';
 import PDFParser from 'pdf2json';
 import { Extrato, Trabalho, ResumoExtrato } from '../schemas/ExtratoSchema';
@@ -9,12 +10,60 @@ export class PDFParserError extends Error {
   }
 }
 
-// Função para normalizar valores numéricos
-const normalizeNumber = (value: string): number => {
+// Função melhorada para normalizar valores numéricos e evitar NaN
+const normalizeNumber = (value: string | number): number => {
+  // Se o valor já for um número, verificar se é NaN ou válido
+  if (typeof value === 'number') {
+    return isNaN(value) ? 0 : value;
+  }
+  
+  // Se for string vazia ou undefined, retorna 0
   if (!value || value.trim() === '') return 0;
   
   // Substitui vírgula por ponto para converter corretamente para número
-  return parseFloat(value.replace(/\./g, '').replace(',', '.'));
+  const normalizedValue = parseFloat(value.replace(/\./g, '').replace(',', '.'));
+  
+  // Verifica se o resultado é NaN e, se for, retorna 0
+  return isNaN(normalizedValue) ? 0 : normalizedValue;
+};
+
+// Função para garantir que um objeto ResumoExtrato não tenha valores NaN
+const validateResumoExtrato = (resumo: ResumoExtrato): ResumoExtrato => {
+  return {
+    baseDeCalculo: isNaN(resumo.baseDeCalculo) ? 0 : resumo.baseDeCalculo,
+    inss: isNaN(resumo.inss) ? 0 : resumo.inss,
+    impostoDeRenda: isNaN(resumo.impostoDeRenda) ? 0 : resumo.impostoDeRenda,
+    descontoJudicial: isNaN(resumo.descontoJudicial) ? 0 : resumo.descontoJudicial,
+    das: isNaN(resumo.das) ? 0 : resumo.das,
+    mensal: isNaN(resumo.mensal) ? 0 : resumo.mensal,
+    impostoSindical: isNaN(resumo.impostoSindical) ? 0 : resumo.impostoSindical,
+    descontosEpiCracha: isNaN(resumo.descontosEpiCracha) ? 0 : resumo.descontosEpiCracha,
+    liquido: isNaN(resumo.liquido) ? 0 : resumo.liquido,
+    ferias: isNaN(resumo.ferias) ? 0 : resumo.ferias,
+    decimoTerceiro: isNaN(resumo.decimoTerceiro) ? 0 : resumo.decimoTerceiro,
+    encargosDecimo: isNaN(resumo.encargosDecimo) ? 0 : resumo.encargosDecimo,
+    fgts: isNaN(resumo.fgts) ? 0 : resumo.fgts
+  };
+};
+
+// Função para validar um trabalho individual
+const validateTrabalho = (trabalho: Trabalho): Trabalho => {
+  return {
+    ...trabalho,
+    baseDeCalculo: isNaN(trabalho.baseDeCalculo) ? 0 : trabalho.baseDeCalculo,
+    inss: isNaN(trabalho.inss) ? 0 : trabalho.inss,
+    impostoDeRenda: isNaN(trabalho.impostoDeRenda) ? 0 : trabalho.impostoDeRenda,
+    descontoJudicial: isNaN(trabalho.descontoJudicial) ? 0 : trabalho.descontoJudicial,
+    das: isNaN(trabalho.das) ? 0 : trabalho.das,
+    mensal: isNaN(trabalho.mensal) ? 0 : trabalho.mensal,
+    impostoSindical: isNaN(trabalho.impostoSindical) ? 0 : trabalho.impostoSindical,
+    descontosEpiCracha: isNaN(trabalho.descontosEpiCracha) ? 0 : trabalho.descontosEpiCracha,
+    liquido: isNaN(trabalho.liquido) ? 0 : trabalho.liquido,
+    ferias: isNaN(trabalho.ferias) ? 0 : trabalho.ferias,
+    decimoTerceiro: isNaN(trabalho.decimoTerceiro) ? 0 : trabalho.decimoTerceiro,
+    encargosDecimo: isNaN(trabalho.encargosDecimo) ? 0 : trabalho.encargosDecimo,
+    fgts: isNaN(trabalho.fgts) ? 0 : trabalho.fgts
+  };
 };
 
 // Função para extrair cabeçalho
@@ -71,163 +120,121 @@ const tomadoresMap: Record<string, string> = {
   // Adicionar mais mapeamentos conforme necessário
 };
 
-// Função corrigida para extrair dados de trabalho
+// Função aprimorada para extrair os dados de trabalho do PDF
 const extractWorkData = (line: string): Trabalho | null => {
-  console.log(`Analisando linha para extração de trabalho: "${line.substring(0, 50)}..."`);
-  
-  // Remover caracteres problemáticos e espaços extras
+  // Remover excesso de espaços e caracteres problemáticos
   const cleanLine = line.replace(/\s+/g, ' ').trim();
   
-  // Diferentes padrões de expressão regular para tentar extrair os dados
-  const patterns = [
-    // Padrão 1: Mais restritivo, com valores em colunas específicas
-    /^(\d{1,2})\s+(\d+)\s+(\d{2})\s+(\S+.*?)\s+(\d{3})\s+(\S+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/,
-    
-    // Padrão 2: Mais flexível, capturando números em sequência
-    /^(\d{1,2})\s+(\d+)\s+(\d{2})\s+(\S+.*?)\s+(\d{3})\s+(\S+)\s+(\d+)\s+(\S+)\s+(\d{2}\/\d{2})\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/,
-    
-    // Padrão 3: Ainda mais flexível, para PDFs com layout diferente
-    /^(\d{1,2})\s+(\d+)\s+(\d{2})\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)\s+([\d.,]+)/
-  ];
+  // Log para debug
+  console.log(`Tentando extrair trabalho da linha: "${cleanLine.substring(0, Math.min(100, cleanLine.length))}..."`);
   
-  let match = null;
-  let matchPattern = -1;
+  // Padrão básico: dia e folha são os primeiros elementos e devem ser números
+  const diaFolhaMatch = cleanLine.match(/^(\d{1,2})\s+(\d+)/);
   
-  // Tentar cada padrão até encontrar um que funcione
-  for (let i = 0; i < patterns.length; i++) {
-    match = cleanLine.match(patterns[i]);
-    if (match) {
-      matchPattern = i;
+  if (!diaFolhaMatch) {
+    return null; // Não é uma linha de trabalho
+  }
+  
+  const dia = diaFolhaMatch[1];
+  const folha = diaFolhaMatch[2];
+  
+  // Depois de dia e folha, tenta extrair o restante dos dados
+  // Dividir a linha em partes
+  const parts = cleanLine.split(/\s+/);
+  
+  // Um trabalho válido deve ter pelo menos 12-15 partes
+  if (parts.length < 12) {
+    console.log(`Linha com menos campos que o esperado (${parts.length}): "${cleanLine}"`);
+    return null;
+  }
+  
+  // Identificar posições esperadas dos campos
+  // Índices aproximados com base no layout observado
+  const tomadorIndex = 2; // Geralmente a terceira coluna
+  let pastaIndex = -1;
+  
+  // Procurar índice da pasta (geralmente um número de 3 dígitos como 801, 802, etc.)
+  for (let i = 3; i < Math.min(10, parts.length); i++) {
+    if (/^\d{3}$/.test(parts[i])) {
+      pastaIndex = i;
       break;
     }
   }
   
-  if (!match) {
-    console.log('Linha não corresponde a nenhum padrão de trabalho');
-    return null;
+  if (pastaIndex === -1) {
+    console.log(`Não foi possível identificar a pasta na linha: "${cleanLine}"`);
+    // Fazer uma tentativa adicional com um padrão diferente
+    // Em alguns layouts, a pasta pode estar em uma posição fixa
+    pastaIndex = 4; // Assumir que está na 5ª posição
   }
   
-  console.log(`Padrão ${matchPattern + 1} funcionou para a linha`);
+  // Extrair dados com base nas posições identificadas
+  const tomador = parts[tomadorIndex];
+  const pasta = parts[pastaIndex];
+  const fun = parts[pastaIndex + 1];
+  const tur = parts[pastaIndex + 2];
+  const ter = parts[pastaIndex + 3];
+  const pagto = parts[pastaIndex + 4];
   
-  // Extrai dados com base no padrão que funcionou
-  let tomadorCodigo = '';
+  // Se chegou até aqui, é uma linha de trabalho, mas precisamos identificar os valores numéricos
+  // Vamos procurar pelos valores financeiros que geralmente estão no final da linha
+  
+  // Encontrar os valores numéricos na linha
+  // Primeiro, vamos remover os dados já identificados para evitar confusão
+  let remainingText = cleanLine;
+  const identifiedParts = [dia, folha, tomador, pasta, fun, tur, ter, pagto];
+  
+  for (const part of identifiedParts) {
+    remainingText = remainingText.replace(part, '');
+  }
+  
+  // Limpar novamente
+  remainingText = remainingText.replace(/\s+/g, ' ').trim();
+  
+  // Extrair os valores numéricos que restaram
+  const numericValues = remainingText.split(/\s+/)
+    .map(v => v.trim())
+    .filter(v => /[\d.,]+/.test(v) && v !== '');
+  
+  // Log para debug
+  console.log(`Valores numéricos encontrados (${numericValues.length}): ${numericValues}`);
+  
+  // Mapear os valores numéricos para os campos correspondentes
+  // Usando normalizeNumber para garantir que não temos NaN
+  const baseDeCalculo = normalizeNumber(numericValues[0] || '0');
+  const inss = normalizeNumber(numericValues[1] || '0');
+  const impostoDeRenda = normalizeNumber(numericValues[2] || '0');
+  const descontoJudicial = normalizeNumber(numericValues[3] || '0');
+  const das = normalizeNumber(numericValues[4] || '0');
+  const mensal = normalizeNumber(numericValues[5] || '0');
+  const impostoSindical = normalizeNumber(numericValues[6] || '0');
+  const descontosEpiCracha = normalizeNumber(numericValues[7] || '0');
+  const liquido = normalizeNumber(numericValues[8] || '0');
+  const ferias = normalizeNumber(numericValues[9] || '0');
+  const decimoTerceiro = normalizeNumber(numericValues[10] || '0');
+  const encargosDecimo = normalizeNumber(numericValues[11] || '0');
+  const fgts = normalizeNumber(numericValues[12] || '0');
+  
+  // Identificar o nome do tomador
   let tomadorNome = '';
-  let pasta = '';
-  let fun = '';
-  let tur = '';
-  let ter = '';
-  let pagto = '';
-  let baseDeCalculo = 0;
-  let inss = 0;
-  let impostoDeRenda = 0;
-  let descontoJudicial = 0;
-  let das = 0;
-  let mensal = 0;
-  let impostoSindical = 0;
-  let descontosEpiCracha = 0;
-  let liquido = 0;
-  let ferias = 0;
-  let decimoTerceiro = 0;
-  let encargosDecimo = 0;
-  let fgts = 0;
+  // Tentar encontrar o nome do tomador no texto entre o código e a pasta
+  const tomadorStartIndex = cleanLine.indexOf(tomador) + tomador.length;
+  const tomadorEndIndex = cleanLine.indexOf(pasta);
   
-  // Determinar o índice de cada campo com base no padrão usado
-  const dia = match[1];
-  const folha = match[2];
-  tomadorCodigo = match[3];
-  
-  if (matchPattern === 0) {
-    // Para o padrão 1, extrair o nome do tomador da parte variável
-    const tomadorInfo = match[4].trim();
-    // Tentar separar o código do tomador e o nome
-    const tomadorMatch = tomadorInfo.match(/^(\S+)\s+(.*)/);
-    
-    if (tomadorMatch) {
-      tomadorNome = tomadorMatch[2].trim();
-    } else {
-      tomadorNome = tomadorInfo;
-    }
-    
-    pasta = match[5];
-    fun = match[6];
-    tur = match[7];
-    ter = match[8];
-    pagto = match[9];
-    
-    // Valores financeiros
-    baseDeCalculo = normalizeNumber(match[10]);
-    inss = normalizeNumber(match[11]);
-    impostoDeRenda = normalizeNumber(match[12]);
-    descontoJudicial = normalizeNumber(match[13]);
-    das = normalizeNumber(match[14]);
-    mensal = normalizeNumber(match[15]);
-    impostoSindical = normalizeNumber(match[16]);
-    descontosEpiCracha = normalizeNumber(match[17]);
-    liquido = normalizeNumber(match[18]);
-    ferias = normalizeNumber(match[19]);
-    decimoTerceiro = normalizeNumber(match[20]);
-    encargosDecimo = normalizeNumber(match[21]);
-    fgts = normalizeNumber(match[22]);
-  } else if (matchPattern === 1) {
-    // Para o padrão 2, processar os campos de acordo
-    const tomadorInfo = match[4].trim();
-    tomadorNome = tomadorInfo;
-    
-    pasta = match[5];
-    fun = match[6];
-    tur = match[7];
-    ter = match[8];
-    pagto = match[9];
-    
-    // Valores financeiros
-    baseDeCalculo = normalizeNumber(match[10]);
-    inss = normalizeNumber(match[11]);
-    impostoDeRenda = normalizeNumber(match[12]);
-    descontoJudicial = normalizeNumber(match[13]);
-    das = normalizeNumber(match[14]);
-    mensal = normalizeNumber(match[15]);
-    impostoSindical = normalizeNumber(match[16]);
-    descontosEpiCracha = normalizeNumber(match[17]);
-    liquido = normalizeNumber(match[18]);
-    ferias = normalizeNumber(match[19]);
-    decimoTerceiro = normalizeNumber(match[20]);
-    encargosDecimo = normalizeNumber(match[21]);
-    fgts = normalizeNumber(match[22]);
-  } else {
-    // Para o padrão 3, processar os campos de acordo
-    pasta = match[4];
-    fun = match[5];
-    tur = match[6];
-    ter = match[7];
-    pagto = match[8];
-    
-    // Valores financeiros
-    baseDeCalculo = normalizeNumber(match[9]);
-    inss = normalizeNumber(match[10]);
-    impostoDeRenda = normalizeNumber(match[11]);
-    descontoJudicial = normalizeNumber(match[12]);
-    das = normalizeNumber(match[13]);
-    mensal = normalizeNumber(match[14]);
-    impostoSindical = normalizeNumber(match[15]);
-    descontosEpiCracha = normalizeNumber(match[16]);
-    liquido = normalizeNumber(match[17]);
-    ferias = normalizeNumber(match[18]);
-    decimoTerceiro = normalizeNumber(match[19]);
-    encargosDecimo = normalizeNumber(match[20]);
-    fgts = normalizeNumber(match[21]);
+  if (tomadorStartIndex < tomadorEndIndex) {
+    tomadorNome = cleanLine.substring(tomadorStartIndex, tomadorEndIndex).trim();
   }
   
-  // Se o nome do tomador não foi encontrado, tentar mapeá-lo pelo código
-  if (!tomadorNome && tomadoresMap[tomadorCodigo]) {
-    tomadorNome = tomadoresMap[tomadorCodigo];
+  // Se não encontrou ou é vazio, usar o mapeamento
+  if (!tomadorNome && tomadoresMap[tomador]) {
+    tomadorNome = tomadoresMap[tomador];
   }
   
-  console.log(`Trabalho extraído: Dia ${dia}, Folha ${folha}, Tomador ${tomadorCodigo} - ${tomadorNome}, Valor ${liquido}`);
-  
-  return {
+  // Construir e retornar o objeto trabalho
+  const trabalho: Trabalho = {
     dia,
     folha,
-    tomador: tomadorCodigo,
+    tomador,
     tomadorNome,
     pasta,
     fun,
@@ -248,6 +255,12 @@ const extractWorkData = (line: string): Trabalho | null => {
     encargosDecimo,
     fgts
   };
+  
+  // Valide o trabalho para garantir que não há valores NaN
+  const trabalhoValidado = validateTrabalho(trabalho);
+  
+  console.log(`Trabalho extraído com sucesso: Dia ${dia}, Valor ${trabalhoValidado.liquido}`);
+  return trabalhoValidado;
 };
 
 // Função corrigida para extrair resumo (Folhas/Complementos e Revisadas)
@@ -330,7 +343,11 @@ const extractSummary = (textContent: string[]): { folhasComplementos: ResumoExtr
         fgts: normalizeNumber(values[12] || '0')
       };
       
-      return { folhasComplementos, revisadas: defaultResumo };
+      // Validar para garantir que não há valores NaN
+      return { 
+        folhasComplementos: validateResumoExtrato(folhasComplementos), 
+        revisadas: defaultResumo 
+      };
     }
     
     // Se ainda não conseguiu extrair, usar abordagem de último recurso:
@@ -444,13 +461,17 @@ const extractSummary = (textContent: string[]): { folhasComplementos: ResumoExtr
     };
   }
 
-  return { folhasComplementos, revisadas };
+  // Validar para garantir que não há valores NaN
+  return { 
+    folhasComplementos: validateResumoExtrato(folhasComplementos), 
+    revisadas: validateResumoExtrato(revisadas) 
+  };
 };
 
-// Função corrigida para processar todo o conteúdo do PDF
 export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
   return new Promise((resolve, reject) => {
-    const pdfParser = new PDFParser();
+    // Configuração do parser com opções específicas
+    const pdfParser = new PDFParser(null, true); // CORREÇÃO: true em vez de 1
     
     pdfParser.on('pdfParser_dataError', (errData: any) => {
       reject(new PDFParserError(`Erro ao analisar PDF: ${errData.parserError}`));
@@ -458,139 +479,268 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
     
     pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
       try {
-        // Extrai o texto completo do PDF
-        const textContent: string[] = [];
-        const pageTexts: string[] = [];
+        console.log(`PDF carregado, iniciando extração...`);
         
-        // Percorre todas as páginas do PDF
+        // Extrair texto do PDF considerando a estrutura do documento
+        const textContent: string[] = [];
+        const rawTextByPage: string[] = [];
+        
+        // Processar todas as páginas
         for (let pageIndex = 0; pageIndex < pdfData.Pages.length; pageIndex++) {
           const page = pdfData.Pages[pageIndex];
           
-          // Texto completo da página
-          let pageText = '';
+          console.log(`Processando página ${pageIndex + 1} de ${pdfData.Pages.length}`);
           
-          // Percorre todos os textos da página
-          for (let textIndex = 0; textIndex < page.Texts.length; textIndex++) {
-            const textItem = page.Texts[textIndex];
-            if (textItem.R && textItem.R.length > 0) {
-              const text = decodeURIComponent(textItem.R[0].T);
-              textContent.push(text);
-              pageText += text + ' ';
+          let pageRawText = '';
+          let currentY = -1;
+          let currentLine = '';
+          
+          // Ordenar os textos por posição Y para agrupar por linhas
+          const sortedTexts = [...page.Texts].sort((a, b) => a.y - b.y);
+          
+          // Processar textos agrupando por linha (mesma coordenada Y)
+          for (const textItem of sortedTexts) {
+            if (!textItem.R || textItem.R.length === 0) continue;
+            
+            const text = decodeURIComponent(textItem.R[0].T);
+            const y = Math.round(textItem.y * 10) / 10; // Arredondar para evitar diferenças mínimas
+            
+            if (currentY === -1) {
+              // Primeira linha
+              currentY = y;
+              currentLine = text;
+            } else if (Math.abs(y - currentY) < 0.5) {
+              // Mesmo Y (mesma linha)
+              currentLine += ' ' + text;
+            } else {
+              // Nova linha
+              textContent.push(currentLine.trim());
+              pageRawText += currentLine.trim() + '\n';
+              currentY = y;
+              currentLine = text;
             }
           }
           
-          pageTexts.push(pageText);
+          // Última linha da página
+          if (currentLine) {
+            textContent.push(currentLine.trim());
+            pageRawText += currentLine.trim() + '\n';
+          }
+          
+          rawTextByPage.push(pageRawText);
         }
         
-        console.log(`Total de páginas processadas: ${pdfData.Pages.length}`);
-        console.log(`Total de itens de texto extraídos: ${textContent.length}`);
+        console.log(`Total de linhas extraídas: ${textContent.length}`);
         
-        // Extrai informações do cabeçalho
+        // Extrair informações do cabeçalho
         const { matricula, nome, mes, ano, categoria } = extractHeader(textContent);
         
         console.log(`Dados de cabeçalho: ${matricula}, ${nome}, ${mes}/${ano}, ${categoria}`);
         
-        // Extrai dados de trabalho
+        // Extrair dados de trabalho
         const trabalhos: Trabalho[] = [];
-
-        // Primeiramente, reconstruir as linhas para extrair trabalhos
-        // Algumas vezes o PDF quebra textos em várias partes
-        const reconstructedLines: string[] = [];
         
-        // Adicionar todas as linhas dos textos das páginas
-        for (const pageText of pageTexts) {
-            const lines = pageText.split('\n');
-            reconstructedLines.push(...lines);
-        }
-        
-        // Adicionar também as linhas originais do texto
-        reconstructedLines.push(...textContent);
-        
-        console.log(`Total de linhas para processamento: ${reconstructedLines.length}`);
-        
-        // Filtrar e processar as linhas que parecem ser de trabalho
-        for (const line of reconstructedLines) {
-            // Verifica se a linha começa com um número (dia) seguido de outro número (folha)
-            if (/^\d{1,2}\s+\d+/.test(line)) {
-                const trabalho = extractWorkData(line);
-                if (trabalho) {
-                    // Verificar se esse trabalho já existe (para evitar duplicatas)
-                    const exists = trabalhos.some(t => 
-                        t.dia === trabalho.dia && 
-                        t.folha === trabalho.folha && 
-                        t.baseDeCalculo === trabalho.baseDeCalculo
-                    );
-                    
-                    if (!exists) {
-                        trabalhos.push(trabalho);
-                    }
+        // Processar cada linha para identificar trabalhos
+        for (const line of textContent) {
+          // Verificar se a linha parece ser um registro de trabalho (começa com número)
+          if (/^\d{1,2}\s+\d+/.test(line)) {
+            try {
+              const trabalho = extractWorkData(line);
+              if (trabalho) {
+                // Validação adicional - evitar duplicatas e entradas inválidas
+                const isDuplicate = trabalhos.some(t => 
+                  t.dia === trabalho.dia && 
+                  t.folha === trabalho.folha && 
+                  t.tomador === trabalho.tomador
+                );
+                
+                if (!isDuplicate) {
+                  trabalhos.push(trabalho);
+                  console.log(`Trabalho adicionado: Dia ${trabalho.dia}, Folha ${trabalho.folha}`);
+                } else {
+                  console.log(`Trabalho duplicado ignorado: Dia ${trabalho.dia}, Folha ${trabalho.folha}`);
                 }
+              }
+            } catch (err) {
+              console.log(`Erro ao processar linha de trabalho: ${err}`);
+              // Continuar com a próxima linha mesmo se houver erro
             }
+          }
         }
         
         console.log(`Total de trabalhos extraídos: ${trabalhos.length}`);
         
-        // Extrai dados de resumo
-        const summaryData = extractSummary(reconstructedLines);
+        // Se não encontrou trabalhos, tentar abordagem alternativa
+        if (trabalhos.length === 0) {
+          console.log(`Nenhum trabalho encontrado com o método padrão. Tentando abordagem alternativa...`);
+          
+          // Extrair trabalhos a partir do texto bruto
+          for (const pageText of rawTextByPage) {
+            const lines = pageText.split('\n');
+            
+            for (const line of lines) {
+              if (/^\d{1,2}\s+\d+/.test(line)) {
+                try {
+                  const trabalho = extractWorkData(line);
+                  if (trabalho && !trabalhos.some(t => 
+                    t.dia === trabalho.dia && 
+                    t.folha === trabalho.folha && 
+                    t.tomador === trabalho.tomador
+                  )) {
+                    trabalhos.push(trabalho);
+                  }
+                } catch (err) {
+                  // Ignorar erros e continuar
+                }
+              }
+            }
+          }
+          
+          console.log(`Após abordagem alternativa: ${trabalhos.length} trabalhos`);
+          
+          // Se ainda não encontrou trabalhos, usar uma abordagem ainda mais manual
+          if (trabalhos.length === 0) {
+            console.log(`Ainda sem trabalhos. Tentando abordagem manual...`);
+            
+            // Em alguns PDFs, os dados podem estar em uma estrutura de tabela
+            // Vamos tentar identificar linhas de tabela pelo padrão de números e espaços
+            for (let i = 0; i < textContent.length; i++) {
+              const line = textContent[i];
+              
+              // Linhas de trabalho geralmente têm vários números separados por espaços
+              const numCount = (line.match(/\d+/g) || []).length;
+              
+              if (numCount >= 8 && /^\d+/.test(line.trim())) {
+                console.log(`Possível linha de trabalho (contém ${numCount} números): ${line}`);
+                
+                try {
+                  // Forçar extração mesmo de linhas que podem não seguir exatamente o padrão
+                  const parts = line.trim().split(/\s+/);
+                  
+                  // Montar um objeto trabalho manualmente se tiver dados suficientes
+                  if (parts.length >= 12) {
+                    const pastaCandidate = parts.find(p => /^\d{3}$/.test(p)) || '000';
+                    const pastaIndex = parts.indexOf(pastaCandidate);
+                    
+                    const trabalho: Trabalho = {
+                      dia: parts[0],
+                      folha: parts[1],
+                      tomador: parts[2],
+                      tomadorNome: tomadoresMap[parts[2]] || '',
+                      pasta: pastaCandidate,
+                      fun: pastaIndex > 0 ? parts[pastaIndex + 1] || 'A' : 'A',
+                      tur: pastaIndex > 0 ? parts[pastaIndex + 2] || '1' : '1',
+                      ter: pastaIndex > 0 ? parts[pastaIndex + 3] || '00/00' : '00/00',
+                      pagto: pastaIndex > 0 ? parts[pastaIndex + 4] || '00/00' : '00/00',
+                      baseDeCalculo: normalizeNumber(parts[parts.length - 13] || '0'),
+                      inss: normalizeNumber(parts[parts.length - 12] || '0'),
+                      impostoDeRenda: normalizeNumber(parts[parts.length - 11] || '0'),
+                      descontoJudicial: normalizeNumber(parts[parts.length - 10] || '0'),
+                      das: normalizeNumber(parts[parts.length - 9] || '0'),
+                      mensal: normalizeNumber(parts[parts.length - 8] || '0'),
+                      impostoSindical: normalizeNumber(parts[parts.length - 7] || '0'),
+                      descontosEpiCracha: normalizeNumber(parts[parts.length - 6] || '0'),
+                      liquido: normalizeNumber(parts[parts.length - 5] || '0'),
+                      ferias: normalizeNumber(parts[parts.length - 4] || '0'),
+                      decimoTerceiro: normalizeNumber(parts[parts.length - 3] || '0'),
+                      encargosDecimo: normalizeNumber(parts[parts.length - 2] || '0'),
+                      fgts: normalizeNumber(parts[parts.length - 1] || '0')
+                    };
+                    
+                    // Validar para garantir que não há valores NaN
+                    const trabalhoValidado = validateTrabalho(trabalho);
+                    
+                    if (trabalhoValidado.baseDeCalculo > 0 || trabalhoValidado.liquido > 0) {
+                      trabalhos.push(trabalhoValidado);
+                    }
+                  }
+                } catch (err) {
+                  // Ignorar e continuar
+                }
+              }
+            }
+          }
+        }
         
+        // Extrair dados de resumo ou calculá-los a partir dos trabalhos
         let folhasComplementos: ResumoExtrato;
         let revisadas: ResumoExtrato;
         
+        const summaryData = extractSummary(textContent);
+        
         if (!summaryData) {
-            console.log('Não foi possível extrair dados de resumo. Calculando a partir dos trabalhos...');
-            
-            // Calcular totais com base nos trabalhos encontrados
-            folhasComplementos = {
-                baseDeCalculo: trabalhos.reduce((sum, t) => sum + t.baseDeCalculo, 0),
-                inss: trabalhos.reduce((sum, t) => sum + t.inss, 0),
-                impostoDeRenda: trabalhos.reduce((sum, t) => sum + t.impostoDeRenda, 0),
-                descontoJudicial: trabalhos.reduce((sum, t) => sum + t.descontoJudicial, 0),
-                das: trabalhos.reduce((sum, t) => sum + t.das, 0),
-                mensal: trabalhos.reduce((sum, t) => sum + t.mensal, 0),
-                impostoSindical: trabalhos.reduce((sum, t) => sum + t.impostoSindical, 0),
-                descontosEpiCracha: trabalhos.reduce((sum, t) => sum + t.descontosEpiCracha, 0),
-                liquido: trabalhos.reduce((sum, t) => sum + t.liquido, 0),
-                ferias: trabalhos.reduce((sum, t) => sum + t.ferias, 0),
-                decimoTerceiro: trabalhos.reduce((sum, t) => sum + t.decimoTerceiro, 0),
-                encargosDecimo: trabalhos.reduce((sum, t) => sum + t.encargosDecimo, 0),
-                fgts: trabalhos.reduce((sum, t) => sum + t.fgts, 0)
-            };
-            
-            // Revisadas geralmente são zeros quando não encontradas
-            revisadas = {
-                baseDeCalculo: 0,
-                inss: 0,
-                impostoDeRenda: 0,
-                descontoJudicial: 0,
-                das: 0,
-                mensal: 0,
-                impostoSindical: 0,
-                descontosEpiCracha: 0,
-                liquido: 0,
-                ferias: 0,
-                decimoTerceiro: 0,
-                encargosDecimo: 0,
-                fgts: 0
-            };
+          console.log('Calculando valores de resumo a partir dos trabalhos...');
+          
+          // Calcular totais com base nos trabalhos encontrados
+          folhasComplementos = {
+            baseDeCalculo: trabalhos.reduce((sum, t) => sum + (isNaN(t.baseDeCalculo) ? 0 : t.baseDeCalculo), 0),
+            inss: trabalhos.reduce((sum, t) => sum + (isNaN(t.inss) ? 0 : t.inss), 0),
+            impostoDeRenda: trabalhos.reduce((sum, t) => sum + (isNaN(t.impostoDeRenda) ? 0 : t.impostoDeRenda), 0),
+            descontoJudicial: trabalhos.reduce((sum, t) => sum + (isNaN(t.descontoJudicial) ? 0 : t.descontoJudicial), 0),
+            das: trabalhos.reduce((sum, t) => sum + (isNaN(t.das) ? 0 : t.das), 0),
+            mensal: trabalhos.reduce((sum, t) => sum + (isNaN(t.mensal) ? 0 : t.mensal), 0),
+            impostoSindical: trabalhos.reduce((sum, t) => sum + (isNaN(t.impostoSindical) ? 0 : t.impostoSindical), 0),
+            descontosEpiCracha: trabalhos.reduce((sum, t) => sum + (isNaN(t.descontosEpiCracha) ? 0 : t.descontosEpiCracha), 0),
+            liquido: trabalhos.reduce((sum, t) => sum + (isNaN(t.liquido) ? 0 : t.liquido), 0),
+            ferias: trabalhos.reduce((sum, t) => sum + (isNaN(t.ferias) ? 0 : t.ferias), 0),
+            decimoTerceiro: trabalhos.reduce((sum, t) => sum + (isNaN(t.decimoTerceiro) ? 0 : t.decimoTerceiro), 0),
+            encargosDecimo: trabalhos.reduce((sum, t) => sum + (isNaN(t.encargosDecimo) ? 0 : t.encargosDecimo), 0),
+            fgts: trabalhos.reduce((sum, t) => sum + (isNaN(t.fgts) ? 0 : t.fgts), 0)
+          };
+          
+          // Validar para garantir que não há valores NaN
+          folhasComplementos = validateResumoExtrato(folhasComplementos);
+          
+          // Revisadas geralmente são zeros quando não encontradas
+          revisadas = {
+            baseDeCalculo: 0,
+            inss: 0,
+            impostoDeRenda: 0,
+            descontoJudicial: 0,
+            das: 0,
+            mensal: 0,
+            impostoSindical: 0,
+            descontosEpiCracha: 0,
+            liquido: 0,
+            ferias: 0,
+            decimoTerceiro: 0,
+            encargosDecimo: 0,
+            fgts: 0
+          };
         } else {
-            console.log('Dados de resumo extraídos com sucesso');
-            folhasComplementos = summaryData.folhasComplementos;
-            revisadas = summaryData.revisadas;
+          folhasComplementos = summaryData.folhasComplementos;
+          revisadas = summaryData.revisadas;
         }
         
-        // Monta o objeto final
+        // Montar o objeto extrato e garantir que não há valores NaN
         const extrato: Extrato = {
-            matricula,
-            nome,
-            mes,
-            ano,
-            categoria,
-            trabalhos,
-            folhasComplementos,
-            revisadas
+          matricula,
+          nome,
+          mes,
+          ano,
+          categoria,
+          trabalhos: trabalhos.map(validateTrabalho), // Validar todos os trabalhos novamente
+          folhasComplementos: validateResumoExtrato(folhasComplementos),
+          revisadas: validateResumoExtrato(revisadas)
         };
         
-        console.log(`Extrato processado com sucesso para ${nome}, ${mes}/${ano}, com ${trabalhos.length} trabalhos`);
+        console.log(`Extrato processado com sucesso. Total de trabalhos: ${trabalhos.length}`);
+        
+        // Comparar totais calculados com os extraídos para validação
+        if (trabalhos.length > 0) {
+          const calculatedTotal = trabalhos.reduce((sum, t) => sum + (isNaN(t.baseDeCalculo) ? 0 : t.baseDeCalculo), 0);
+          const extractedTotal = folhasComplementos.baseDeCalculo;
+          
+          console.log(`Validação: Total calculado=${calculatedTotal}, Total extraído=${extractedTotal}`);
+          
+          // Se houver uma grande discrepância, pode indicar que a extração não está correta
+          const difference = Math.abs(calculatedTotal - extractedTotal);
+          const percentDifference = extractedTotal > 0 ? (difference / extractedTotal) * 100 : 0;
+          
+          if (percentDifference > 10 && extractedTotal > 0) {
+            console.log(`Aviso: Diferença significativa (${percentDifference.toFixed(2)}%) entre total calculado e extraído`);
+          }
+        }
         
         resolve(extrato);
       } catch (error) {
@@ -602,11 +752,12 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
       }
     });
     
-    // Carrega o arquivo PDF
     try {
+      // Carregar o PDF com configurações otimizadas
       pdfParser.loadPDF(filePath);
     } catch (error) {
       reject(new PDFParserError(`Erro ao carregar o arquivo PDF: ${error}`));
     }
   });
 };
+
