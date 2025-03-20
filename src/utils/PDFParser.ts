@@ -79,7 +79,16 @@ const extractHeader = (textContent: string[]): { matricula: string, nome: string
     const matriculaNomeMatch = line.match(/(\d+-\d+)\s+(.+)/);
     if (matriculaNomeMatch) {
       matricula = matriculaNomeMatch[1].trim();
+      
+      // Extrair o nome sem incluir a categoria (que pode vir a seguir)
       nome = matriculaNomeMatch[2].trim();
+      // Remover a categoria se estiver junto ao nome
+      const categorias = ['ESTIVADOR', 'ARRUMADOR', 'VIGIA', 'CONFERENTE'];
+      for (const cat of categorias) {
+        if (nome.toUpperCase().includes(cat)) {
+          nome = nome.replace(new RegExp(cat, 'i'), '').trim();
+        }
+      }
     }
     
     // Padrão para mês/ano: "MMM/AAAA"
@@ -133,44 +142,81 @@ const extractWorkData = (line: string): Trabalho | null => {
   }
   
   // Posições esperadas dos campos
-  const tomadorIndex = 3; // O tomador geralmente está na posição 3
-  let pastaIndex = -1;
+  const tomadorIndex = 3; // O tomador está na posição 3
   
-  // Procurar índice da pasta
-  for (let i = 4; i < Math.min(12, parts.length); i++) {
+  // Determinando a estrutura corrigida dos campos
+  // O tomador já está definido
+  const tomador = parts[tomadorIndex] || '';
+  
+  // Depois do tomador geralmente vem o nome do navio (pasta)
+  // O nome do navio pode ocupar várias posições, então precisamos identificar onde termina
+  let pastaEnd = tomadorIndex + 1;
+  let funIndex = -1;
+  
+  // Procurar pelo campo "fun" que geralmente é um número de 3 dígitos (101, 801, etc.)
+  for (let i = tomadorIndex + 1; i < parts.length - 10; i++) {
     if (/^\d{3}$/.test(parts[i])) {
-      pastaIndex = i;
+      funIndex = i;
+      pastaEnd = i - 1;
       break;
     }
   }
   
-  if (pastaIndex === -1) {
-    pastaIndex = 5; // Assumir uma posição fixa como fallback
+  // Se não encontrou um campo "fun" claro, usar uma estratégia alternativa
+  if (funIndex === -1) {
+    // Assumir uma posição aproximada baseada na observação dos PDFs
+    funIndex = Math.min(tomadorIndex + 4, parts.length - 10);
+    pastaEnd = funIndex - 1;
   }
   
-  // Extrair dados com base nas posições identificadas
-  const tomador = parts[tomadorIndex] || '';
-  const pasta = parts[pastaIndex] || '';
+  // Extrair a pasta (nome do navio) juntando as partes entre o tomador e o fun
+  let pasta = '';
+  for (let i = tomadorIndex + 1; i <= pastaEnd; i++) {
+    pasta += (pasta ? ' ' : '') + parts[i];
+  }
   
-  // Extrair os valores numéricos que geralmente estão no final da linha
+  // Os demais campos estão em sequência após o fun
+  const fun = parts[funIndex] || '';
+  const tur = parts[funIndex + 1] || '';
+  const ter = parts[funIndex + 2] || '';
+  const pagto = parts[funIndex + 3] || '';
+  
+  // Buscar os valores numéricos no final da linha
+  // A linha geralmente termina com 13 valores numéricos em sequência
   const numericValues = [];
-  for (let i = Math.min(pastaIndex + 5, parts.length - 13); i < parts.length; i++) {
+  let numStart = -1;
+  
+  // Encontrar o início dos valores numéricos
+  for (let i = parts.length - 1; i >= funIndex + 4; i--) {
     if (/^[\d.,]+$/.test(parts[i])) {
-      numericValues.push(parts[i]);
+      if (numericValues.length === 0) {
+        // Começamos do final, então este é o último número
+        numStart = Math.max(i - 12, funIndex + 4); // Queremos 13 números no total
+      }
+      if (i >= numStart) {
+        numericValues.unshift(parts[i]); // Adicionar ao início do array para manter a ordem
+      }
+      if (numericValues.length >= 13) {
+        break;
+      }
     }
   }
   
+  // Garantir que temos o número correto de valores, preenchendo com zeros se necessário
+  while (numericValues.length < 13) {
+    numericValues.push('0');
+  }
+  
   // Mapear os valores numéricos para os campos correspondentes
-  // Usando valores padrão se não encontrados
   const trabalho: Trabalho = {
     dia,
     folha,
     tomador,
     pasta,
-    fun: parts[pastaIndex + 1] || '',
-    tur: parts[pastaIndex + 2] || '',
-    ter: parts[pastaIndex + 3] || '',
-    pagto: parts[pastaIndex + 4] || '',
+    fun,
+    tur,
+    ter,
+    pagto,
     baseDeCalculo: normalizeNumber(numericValues[0] || '0'),
     inss: normalizeNumber(numericValues[1] || '0'),
     impostoDeRenda: normalizeNumber(numericValues[2] || '0'),
@@ -209,184 +255,140 @@ const extractSummary = (textContent: string[]): { folhasComplementos: ResumoExtr
     fgts: 0
   };
 
-  // Procurar linhas de resumo no conteúdo completo
-  let folhasComplementosIndex = -1;
-  let revisadasIndex = -1;
-
-  // Primeiro, encontrar os índices das linhas com os identificadores
-  for (let i = 0; i < textContent.length; i++) {
-    const line = textContent[i].trim();
-    
-    if (line.includes('Folhas/Complementos') || line === 'Folhas/Complementos') {
-      folhasComplementosIndex = i;
-    } else if (line.includes('Revisadas') || line === 'Revisadas') {
-      revisadasIndex = i;
-    }
-  }
-
-  console.log(`Índice Folhas/Complementos: ${folhasComplementosIndex}, Índice Revisadas: ${revisadasIndex}`);
-
-  // Se não encontrou nenhuma referência, tentar abordagem alternativa
-  if (folhasComplementosIndex === -1) {
-    // Procurar pelos totais diretamente
-    // Muitas vezes os totais aparecem como uma linha numérica após as linhas de itens
-    let totalLine = '';
-    
-    // Procurar linha que tem muitos números e parece um total
-    for (let i = textContent.length - 30; i < textContent.length; i++) {
-      if (i >= 0 && textContent[i]) {
-        const line = textContent[i].trim();
-        const numbersInLine = line.split(/\s+/).filter(part => 
-          /^[\d.,]+$/.test(part) && part.length > 1
-        ).length;
-        
-        // Se a linha contém pelo menos 10 números, é provavelmente uma linha de total
-        if (numbersInLine >= 10) {
-          totalLine = line;
-          console.log(`Possível linha de total encontrada: ${totalLine}`);
-          break;
-        }
-      }
-    }
-    
-    // Se encontrou uma linha com números suficientes, usar essa linha
-    if (totalLine) {
-      const values = totalLine.split(/\s+/).filter(v => v.trim() !== '');
-      
-      // Criar o resumo a partir dos valores encontrados
-      const folhasComplementos: ResumoExtrato = {
-        baseDeCalculo: normalizeNumber(values[0] || '0'),
-        inss: normalizeNumber(values[1] || '0'),
-        impostoDeRenda: normalizeNumber(values[2] || '0'),
-        descontoJudicial: normalizeNumber(values[3] || '0'),
-        das: normalizeNumber(values[4] || '0'),
-        mensal: normalizeNumber(values[5] || '0'),
-        impostoSindical: normalizeNumber(values[6] || '0'),
-        descontosEpiCracha: normalizeNumber(values[7] || '0'),
-        liquido: normalizeNumber(values[8] || '0'),
-        ferias: normalizeNumber(values[9] || '0'),
-        decimoTerceiro: normalizeNumber(values[10] || '0'),
-        encargosDecimo: normalizeNumber(values[11] || '0'),
-        fgts: normalizeNumber(values[12] || '0')
-      };
-      
-      // Validar para garantir que não há valores NaN
-      return { 
-        folhasComplementos: validateResumoExtrato(folhasComplementos), 
-        revisadas: defaultResumo 
-      };
-    }
-    
-    // Se ainda não conseguiu extrair, usar abordagem de último recurso:
-    // Somar todos os valores dos trabalhos individuais
-    console.log('Usando abordagem de último recurso: somando valores dos trabalhos');
-    return null; // Retornar null para que a camada superior saiba que precisa calcular os totais
-  }
-
-  // Se encontrou o índice, procurar a linha com os valores (geralmente está próxima)
+  // Procurar pela linha de total (linha com valores em negrito após a lista de trabalhos)
+  let totalLineIndex = -1;
   let folhasComplementosLine = '';
   let revisadasLine = '';
 
-  // Procurar valores nas próximas linhas após os identificadores
-  for (let i = folhasComplementosIndex + 1; i < folhasComplementosIndex + 5 && i < textContent.length; i++) {
+  // Primeiro, encontrar uma linha que contenha apenas números e tenha pelo menos 10 números
+  // Esta provavelmente é a linha de total
+  for (let i = 0; i < textContent.length; i++) {
     const line = textContent[i].trim();
-    // Verificar se a linha contém vários números
-    if (/[\d.,]+\s+[\d.,]+/.test(line)) {
-      folhasComplementosLine = line;
-      break;
-    }
-  }
-
-  if (revisadasIndex !== -1) {
-    for (let i = revisadasIndex + 1; i < revisadasIndex + 5 && i < textContent.length; i++) {
-      const line = textContent[i].trim();
-      if (/[\d.,]+\s+[\d.,]+/.test(line)) {
-        revisadasLine = line;
+    if (line) {
+      const parts = line.split(/\s+/);
+      // Verificar se a linha tem muitos números
+      const numCount = parts.filter(part => /^[\d.,]+$/.test(part)).length;
+      if (numCount >= 10 && parts.every(part => /^[\d.,]+$/.test(part) || part.trim() === '')) {
+        totalLineIndex = i;
+        console.log(`Possível linha de total encontrada no índice ${i}: ${line}`);
         break;
       }
     }
   }
 
-  console.log(`Linha Folhas/Complementos: "${folhasComplementosLine}"`);
-  console.log(`Linha Revisadas: "${revisadasLine}"`);
-
-  // Se não encontrou a linha com valores, usar o texto completo para buscar
-  if (!folhasComplementosLine) {
-    // Buscar no texto completo por linhas que possam conter os totais
-    for (let i = 0; i < textContent.length; i++) {
+  // Se encontrou a linha de total, as próximas linhas provavelmente são Folhas/Complementos e Revisadas
+  if (totalLineIndex !== -1) {
+    // Procurar nas próximas linhas por Folhas/Complementos e Revisadas
+    for (let i = totalLineIndex; i < Math.min(totalLineIndex + 10, textContent.length); i++) {
       const line = textContent[i].trim();
-      // Procurar por linhas com números que parecem totais
-      if (line.includes('Folhas/Complementos') && i + 1 < textContent.length) {
-        folhasComplementosLine = textContent[i + 1].trim();
-      } else if (line.includes('Revisadas') && i + 1 < textContent.length) {
-        revisadasLine = textContent[i + 1].trim();
+      
+      if (line.includes('Folhas/Complementos')) {
+        // A linha pode ter o texto "Folhas/Complementos" seguido por números
+        // ou os números podem estar na próxima linha
+        const parts = line.split(/\s+/);
+        const numericParts = parts.filter(part => /^[\d.,]+$/.test(part));
+        
+        if (numericParts.length >= 10) {
+          // Os números estão na mesma linha
+          folhasComplementosLine = line;
+        } else if (i + 1 < textContent.length) {
+          // Os números estão na próxima linha
+          folhasComplementosLine = textContent[i + 1].trim();
+        }
+        
+        console.log(`Linha Folhas/Complementos encontrada: ${folhasComplementosLine}`);
+      } else if (line.includes('Revisadas')) {
+        // Similar ao anterior
+        const parts = line.split(/\s+/);
+        const numericParts = parts.filter(part => /^[\d.,]+$/.test(part));
+        
+        if (numericParts.length >= 10) {
+          revisadasLine = line;
+        } else if (i + 1 < textContent.length) {
+          revisadasLine = textContent[i + 1].trim();
+        }
+        
+        console.log(`Linha Revisadas encontrada: ${revisadasLine}`);
       }
     }
   }
 
-  // Se ainda não encontrou, fazer uma última tentativa procurando por padrões específicos
-  if (!folhasComplementosLine) {
-    for (let i = textContent.length - 30; i < textContent.length; i++) {
-      if (i >= 0) {
-        const line = textContent[i].trim();
-        // Procurar linhas com muitos números que podem ser os totais
-        const parts = line.split(/\s+/);
-        if (parts.length >= 10 && parts.every(part => /^[\d.,]+$/.test(part) || part === '')) {
+  // Se ainda não encontrou as linhas específicas, mas achou a linha de total,
+  // as próximas duas linhas numéricas são provavelmente o que procuramos
+  if (totalLineIndex !== -1 && (!folhasComplementosLine || !revisadasLine)) {
+    let foundLines = 0;
+    
+    for (let i = totalLineIndex + 1; i < Math.min(totalLineIndex + 10, textContent.length) && foundLines < 2; i++) {
+      const line = textContent[i].trim();
+      const parts = line.split(/\s+/);
+      const numericParts = parts.filter(part => /^[\d.,]+$/.test(part));
+      
+      if (numericParts.length >= 10) {
+        if (foundLines === 0) {
           folhasComplementosLine = line;
-          break;
+          console.log(`Assumindo que esta é a linha Folhas/Complementos: ${line}`);
+          foundLines++;
+        } else {
+          revisadasLine = line;
+          console.log(`Assumindo que esta é a linha Revisadas: ${line}`);
+          foundLines++;
         }
       }
     }
   }
 
-  // Se ainda não conseguiu encontrar, montar um resumo zerado
+  // Se não encontrou as linhas, retornar null para calcular os totais a partir dos trabalhos
   if (!folhasComplementosLine) {
-    console.log('Não foi possível encontrar a linha de totais. Usando valores padrão.');
-    return { 
-      folhasComplementos: defaultResumo, 
-      revisadas: defaultResumo 
-    };
+    console.log('Não foi possível encontrar a linha de Folhas/Complementos. Usando valores padrão.');
+    return null;
   }
 
-  // Extrair os valores da linha de Folhas/Complementos
-  const folhasValues = folhasComplementosLine.split(/\s+/).filter(val => val.trim() !== '');
-  
-  const folhasComplementos: ResumoExtrato = {
-    baseDeCalculo: normalizeNumber(folhasValues[0] || '0'),
-    inss: normalizeNumber(folhasValues[1] || '0'),
-    impostoDeRenda: normalizeNumber(folhasValues[2] || '0'),
-    descontoJudicial: normalizeNumber(folhasValues[3] || '0'),
-    das: normalizeNumber(folhasValues[4] || '0'),
-    mensal: normalizeNumber(folhasValues[5] || '0'),
-    impostoSindical: normalizeNumber(folhasValues[6] || '0'),
-    descontosEpiCracha: normalizeNumber(folhasValues[7] || '0'),
-    liquido: normalizeNumber(folhasValues[8] || '0'),
-    ferias: normalizeNumber(folhasValues[9] || '0'),
-    decimoTerceiro: normalizeNumber(folhasValues[10] || '0'),
-    encargosDecimo: normalizeNumber(folhasValues[11] || '0'),
-    fgts: normalizeNumber(folhasValues[12] || '0')
+  // Extrair os valores numéricos das linhas
+  const extractValues = (line: string): number[] => {
+    return line.split(/\s+/)
+      .filter(part => /^[\d.,]+$/.test(part))
+      .map(normalizeNumber);
   };
 
-  // Se tem linha de revisadas, extrai os valores
-  let revisadas = defaultResumo;
-  if (revisadasLine) {
-    const revisadasValues = revisadasLine.split(/\s+/).filter(val => val.trim() !== '');
-    revisadas = {
-      baseDeCalculo: normalizeNumber(revisadasValues[0] || '0'),
-      inss: normalizeNumber(revisadasValues[1] || '0'),
-      impostoDeRenda: normalizeNumber(revisadasValues[2] || '0'),
-      descontoJudicial: normalizeNumber(revisadasValues[3] || '0'),
-      das: normalizeNumber(revisadasValues[4] || '0'),
-      mensal: normalizeNumber(revisadasValues[5] || '0'),
-      impostoSindical: normalizeNumber(revisadasValues[6] || '0'),
-      descontosEpiCracha: normalizeNumber(revisadasValues[7] || '0'),
-      liquido: normalizeNumber(revisadasValues[8] || '0'),
-      ferias: normalizeNumber(revisadasValues[9] || '0'),
-      decimoTerceiro: normalizeNumber(revisadasValues[10] || '0'),
-      encargosDecimo: normalizeNumber(revisadasValues[11] || '0'),
-      fgts: normalizeNumber(revisadasValues[12] || '0')
-    };
-  }
+  const folhasValues = extractValues(folhasComplementosLine);
+  const revisadasValues = revisadasLine ? extractValues(revisadasLine) : Array(13).fill(0);
+
+  // Garantir que temos o número correto de valores
+  while (folhasValues.length < 13) folhasValues.push(0);
+  while (revisadasValues.length < 13) revisadasValues.push(0);
+
+  // Criar os objetos de resumo
+  const folhasComplementos: ResumoExtrato = {
+    baseDeCalculo: folhasValues[0] || 0,
+    inss: folhasValues[1] || 0,
+    impostoDeRenda: folhasValues[2] || 0,
+    descontoJudicial: folhasValues[3] || 0,
+    das: folhasValues[4] || 0,
+    mensal: folhasValues[5] || 0,
+    impostoSindical: folhasValues[6] || 0,
+    descontosEpiCracha: folhasValues[7] || 0,
+    liquido: folhasValues[8] || 0,
+    ferias: folhasValues[9] || 0,
+    decimoTerceiro: folhasValues[10] || 0,
+    encargosDecimo: folhasValues[11] || 0,
+    fgts: folhasValues[12] || 0
+  };
+
+  const revisadas: ResumoExtrato = {
+    baseDeCalculo: revisadasValues[0] || 0,
+    inss: revisadasValues[1] || 0,
+    impostoDeRenda: revisadasValues[2] || 0,
+    descontoJudicial: revisadasValues[3] || 0,
+    das: revisadasValues[4] || 0,
+    mensal: revisadasValues[5] || 0,
+    impostoSindical: revisadasValues[6] || 0,
+    descontosEpiCracha: revisadasValues[7] || 0,
+    liquido: revisadasValues[8] || 0,
+    ferias: revisadasValues[9] || 0,
+    decimoTerceiro: revisadasValues[10] || 0,
+    encargosDecimo: revisadasValues[11] || 0,
+    fgts: revisadasValues[12] || 0
+  };
 
   // Validar para garantir que não há valores NaN
   return { 
@@ -483,7 +485,7 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
                 
                 if (!isDuplicate) {
                   trabalhos.push(trabalho);
-                  console.log(`Trabalho adicionado: Dia ${trabalho.dia}, Folha ${trabalho.folha}`);
+                  console.log(`Trabalho adicionado: Dia ${trabalho.dia}, Folha ${trabalho.folha}, Tomador ${trabalho.tomador}, Pasta ${trabalho.pasta}`);
                 } else {
                   console.log(`Trabalho duplicado ignorado: Dia ${trabalho.dia}, Folha ${trabalho.folha}`);
                 }
@@ -544,43 +546,12 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
                   
                   // Montar um objeto trabalho manualmente se tiver dados suficientes
                   if (parts.length >= 12) {
-                    // Extrair informações básicas
-                    const dia = parts[0];
-                    const folha = parts.length > 3 ? `${parts[1]}-${parts[2]}` : parts[1];
-                    
-                    // Para outros trabalhos
-                    const pastaCandidate = parts.find((p, idx) => idx > 3 && /^\d{3}$/.test(p)) || '000';
-                    const pastaIndex = parts.indexOf(pastaCandidate);
-                    
-                    const trabalho: Trabalho = {
-                      dia,
-                      folha,
-                      tomador: parts[3] || '',
-                      pasta: pastaCandidate,
-                      fun: pastaIndex > 0 ? parts[pastaIndex + 1] || '' : '',
-                      tur: pastaIndex > 0 ? parts[pastaIndex + 2] || '' : '',
-                      ter: pastaIndex > 0 ? parts[pastaIndex + 3] || '' : '',
-                      pagto: pastaIndex > 0 ? parts[pastaIndex + 4] || '' : '',
-                      baseDeCalculo: normalizeNumber(parts[parts.length - 13] || '0'),
-                      inss: normalizeNumber(parts[parts.length - 12] || '0'),
-                      impostoDeRenda: normalizeNumber(parts[parts.length - 11] || '0'),
-                      descontoJudicial: normalizeNumber(parts[parts.length - 10] || '0'),
-                      das: normalizeNumber(parts[parts.length - 9] || '0'),
-                      mensal: normalizeNumber(parts[parts.length - 8] || '0'),
-                      impostoSindical: normalizeNumber(parts[parts.length - 7] || '0'),
-                      descontosEpiCracha: normalizeNumber(parts[parts.length - 6] || '0'),
-                      liquido: normalizeNumber(parts[parts.length - 5] || '0'),
-                      ferias: normalizeNumber(parts[parts.length - 4] || '0'),
-                      decimoTerceiro: normalizeNumber(parts[parts.length - 3] || '0'),
-                      encargosDecimo: normalizeNumber(parts[parts.length - 2] || '0'),
-                      fgts: normalizeNumber(parts[parts.length - 1] || '0')
-                    };
-                    
-                    // Validar para garantir que não há valores NaN
-                    const trabalhoValidado = validateTrabalho(trabalho);
-                    
-                    if (trabalhoValidado.baseDeCalculo > 0 || trabalhoValidado.liquido > 0) {
-                      trabalhos.push(trabalhoValidado);
+                    const trabalho = extractWorkData(line);
+                    if (trabalho && !trabalhos.some(t => 
+                      t.dia === trabalho.dia && 
+                      t.folha === trabalho.folha
+                    )) {
+                      trabalhos.push(trabalho);
                     }
                   }
                 } catch (err) {
@@ -655,6 +626,7 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
         };
         
         console.log(`Extrato processado com sucesso. Total de trabalhos: ${trabalhos.length}`);
+        console.log(`Resumo - Base de Cálculo: ${folhasComplementos.baseDeCalculo}, Líquido: ${folhasComplementos.liquido}`);
         
         // Comparar totais calculados com os extraídos para validação
         if (trabalhos.length > 0) {
