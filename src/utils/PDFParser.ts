@@ -1,4 +1,3 @@
-
 import * as fs from 'fs';
 import PDFParser from 'pdf2json';
 import { Extrato, Trabalho, ResumoExtrato } from '../schemas/ExtratoSchema';
@@ -66,7 +65,7 @@ const validateTrabalho = (trabalho: Trabalho): Trabalho => {
   };
 };
 
-// Função para extrair cabeçalho
+// Função corrigida para extrair cabeçalho
 const extractHeader = (textContent: string[]): { matricula: string, nome: string, mes: string, ano: string, categoria: string } => {
   let matricula = '';
   let nome = '';
@@ -80,7 +79,11 @@ const extractHeader = (textContent: string[]): { matricula: string, nome: string
     const matriculaNomeMatch = line.match(/(\d+-\d+)\s+(.+)/);
     if (matriculaNomeMatch) {
       matricula = matriculaNomeMatch[1].trim();
-      nome = matriculaNomeMatch[2].trim();
+      
+      // Extrair apenas o nome, convertendo para minúsculas e depois formatando com iniciais maiúsculas
+      nome = matriculaNomeMatch[2].trim().toLowerCase();
+      // Formatar com iniciais maiúsculas (opcional)
+      nome = nome.replace(/\b\w/g, c => c.toUpperCase());
     }
     
     // Padrão para mês/ano: "MMM/AAAA"
@@ -90,10 +93,15 @@ const extractHeader = (textContent: string[]): { matricula: string, nome: string
       ano = mesAnoMatch[2];
     }
     
-    // Categoria do trabalhador
-    if (line.includes('ESTIVADOR') || line.includes('ARRUMADOR') || 
-        line.includes('VIGIA') || line.includes('CONFERENTE')) {
-      categoria = line.trim();
+    // Categoria do trabalhador - extrair apenas "estivador", "arrumador", etc.
+    if (line.toUpperCase().includes('ESTIVADOR')) {
+      categoria = 'ESTIVADOR';
+    } else if (line.toUpperCase().includes('ARRUMADOR')) {
+      categoria = 'ARRUMADOR';
+    } else if (line.toUpperCase().includes('VIGIA')) {
+      categoria = 'VIGIA';
+    } else if (line.toUpperCase().includes('CONFERENTE')) {
+      categoria = 'CONFERENTE';
     }
   }
 
@@ -128,17 +136,18 @@ const extractWorkData = (line: string): Trabalho | null => {
   // Log para debug
   console.log(`Tentando extrair trabalho da linha: "${cleanLine.substring(0, Math.min(100, cleanLine.length))}..."`);
   
-  // Padrão básico: dia e folha são os primeiros elementos e devem ser números
-  const diaFolhaMatch = cleanLine.match(/^(\d{1,2})\s+(\d+)/);
+  // Padrão básico: dia e começo da folha são os primeiros elementos e devem ser números
+  const diaFolhaMatch = cleanLine.match(/^(\d{1,2})\s+(\d+)\s+(\d{2})/);
   
   if (!diaFolhaMatch) {
     return null; // Não é uma linha de trabalho
   }
   
   const dia = diaFolhaMatch[1];
-  const folha = diaFolhaMatch[2];
+  // Folha agora inclui o número de 6 dígitos, um hífen e o número de 2 dígitos
+  const folha = `${diaFolhaMatch[2]}-${diaFolhaMatch[3]}`;
   
-  // Depois de dia e folha, tenta extrair o restante dos dados
+  // Depois de extrair dia e folha, obtemos o tomador (que está após o número de 2 dígitos)
   // Dividir a linha em partes
   const parts = cleanLine.split(/\s+/);
   
@@ -148,13 +157,13 @@ const extractWorkData = (line: string): Trabalho | null => {
     return null;
   }
   
-  // Identificar posições esperadas dos campos
-  // Índices aproximados com base no layout observado
-  const tomadorIndex = 2; // Geralmente a terceira coluna
+  // Reorganizamos os índices devido à nova interpretação de "folha"
+  // O tomador agora está na posição 3
+  const tomadorIndex = 3;
   let pastaIndex = -1;
   
   // Procurar índice da pasta (geralmente um número de 3 dígitos como 801, 802, etc.)
-  for (let i = 3; i < Math.min(10, parts.length); i++) {
+  for (let i = 4; i < Math.min(12, parts.length); i++) {
     if (/^\d{3}$/.test(parts[i])) {
       pastaIndex = i;
       break;
@@ -165,7 +174,7 @@ const extractWorkData = (line: string): Trabalho | null => {
     console.log(`Não foi possível identificar a pasta na linha: "${cleanLine}"`);
     // Fazer uma tentativa adicional com um padrão diferente
     // Em alguns layouts, a pasta pode estar em uma posição fixa
-    pastaIndex = 4; // Assumir que está na 5ª posição
+    pastaIndex = 5; // Assumir que está na 6ª posição, devido à nova interpretação da folha
   }
   
   // Extrair dados com base nas posições identificadas
@@ -182,7 +191,7 @@ const extractWorkData = (line: string): Trabalho | null => {
   // Encontrar os valores numéricos na linha
   // Primeiro, vamos remover os dados já identificados para evitar confusão
   let remainingText = cleanLine;
-  const identifiedParts = [dia, folha, tomador, pasta, fun, tur, ter, pagto];
+  const identifiedParts = [dia, parts[1], parts[2], tomador, pasta, fun, tur, ter, pagto]; // Ajustado para a nova interpretação
   
   for (const part of identifiedParts) {
     remainingText = remainingText.replace(part, '');
@@ -259,7 +268,7 @@ const extractWorkData = (line: string): Trabalho | null => {
   // Valide o trabalho para garantir que não há valores NaN
   const trabalhoValidado = validateTrabalho(trabalho);
   
-  console.log(`Trabalho extraído com sucesso: Dia ${dia}, Valor ${trabalhoValidado.liquido}`);
+  console.log(`Trabalho extraído com sucesso: Dia ${dia}, Folha ${folha}, Valor ${trabalhoValidado.liquido}`);
   return trabalhoValidado;
 };
 
@@ -468,6 +477,7 @@ const extractSummary = (textContent: string[]): { folhasComplementos: ResumoExtr
   };
 };
 
+// Função melhorada para processar o PDF e extrair texto mais precisamente
 export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
   return new Promise((resolve, reject) => {
     // Configuração do parser com opções específicas
@@ -550,8 +560,7 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
                 // Validação adicional - evitar duplicatas e entradas inválidas
                 const isDuplicate = trabalhos.some(t => 
                   t.dia === trabalho.dia && 
-                  t.folha === trabalho.folha && 
-                  t.tomador === trabalho.tomador
+                  t.folha === trabalho.folha
                 );
                 
                 if (!isDuplicate) {
@@ -584,8 +593,7 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
                   const trabalho = extractWorkData(line);
                   if (trabalho && !trabalhos.some(t => 
                     t.dia === trabalho.dia && 
-                    t.folha === trabalho.folha && 
-                    t.tomador === trabalho.tomador
+                    t.folha === trabalho.folha
                   )) {
                     trabalhos.push(trabalho);
                   }
@@ -619,14 +627,18 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
                   
                   // Montar um objeto trabalho manualmente se tiver dados suficientes
                   if (parts.length >= 12) {
-                    const pastaCandidate = parts.find(p => /^\d{3}$/.test(p)) || '000';
+                    // Ajustado para considerar nova interpretação do campo folha
+                    const dia = parts[0];
+                    const folha = parts.length > 3 ? `${parts[1]}-${parts[2]}` : parts[1];
+                    
+                    const pastaCandidate = parts.find((p, idx) => idx > 3 && /^\d{3}$/.test(p)) || '000';
                     const pastaIndex = parts.indexOf(pastaCandidate);
                     
                     const trabalho: Trabalho = {
-                      dia: parts[0],
-                      folha: parts[1],
-                      tomador: parts[2],
-                      tomadorNome: tomadoresMap[parts[2]] || '',
+                      dia,
+                      folha,
+                      tomador: parts[3] || '',
+                      tomadorNome: tomadoresMap[parts[3] || ''] || '',
                       pasta: pastaCandidate,
                       fun: pastaIndex > 0 ? parts[pastaIndex + 1] || 'A' : 'A',
                       tur: pastaIndex > 0 ? parts[pastaIndex + 2] || '1' : '1',
@@ -760,4 +772,3 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
     }
   });
 };
-
