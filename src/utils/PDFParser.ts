@@ -117,6 +117,12 @@ const extractHeader = (textContent: string[]): { matricula: string, nome: string
   return { matricula, nome, mes, ano, categoria };
 };
 
+// Lista de operadores portuários conhecidos (pode ser expandida conforme necessário)
+const OPERADORES_PORTUARIOS = [
+  'AGM', 'SAGRES', 'TECON', 'TERMASA', 'ROCHA RS', 'LIVENPORT', 'BIANCHINI', 'CTIL',
+  'SERRA MOR', 'RGLP', 'ORION'
+];
+
 // Função para extrair os dados de trabalho do PDF
 const extractWorkData = (line: string): Trabalho | null => {
   // Remover excesso de espaços e caracteres problemáticos
@@ -141,68 +147,97 @@ const extractWorkData = (line: string): Trabalho | null => {
     return null;
   }
   
-  // Posições esperadas dos campos
-  const tomadorIndex = 3; // O tomador está na posição 3
+  // Identificar o operador portuário (tomador)
+  let tomador = '';
+  let tomadorIndex = 3; // Posição inicial esperada
+  let tomadorEnd = 3;
   
-  // Determinando a estrutura corrigida dos campos
-  // O tomador já está definido
-  const tomador = parts[tomadorIndex] || '';
-  
-  // Depois do tomador geralmente vem o nome do navio (pasta)
-  // O nome do navio pode ocupar várias posições, então precisamos identificar onde termina
-  let pastaEnd = tomadorIndex + 1;
-  let funIndex = -1;
-  
-  // Procurar pelo campo "fun" que geralmente é um número de 3 dígitos (101, 801, etc.)
-  for (let i = tomadorIndex + 1; i < parts.length - 10; i++) {
-    if (/^\d{3}$/.test(parts[i])) {
-      funIndex = i;
-      pastaEnd = i - 1;
+  // Verificar se o tomador é composto (ex: "SERRA MOR", "ROCHA RS")
+  for (const op of OPERADORES_PORTUARIOS) {
+    const opParts = op.split(/\s+/);
+    if (opParts.length > 1) {
+      // Verificar se todas as partes do operador estão presentes na linha
+      let match = true;
+      for (let i = 0; i < opParts.length && match; i++) {
+        if (i + tomadorIndex >= parts.length || parts[i + tomadorIndex].toUpperCase() !== opParts[i].toUpperCase()) {
+          match = false;
+        }
+      }
+      
+      if (match) {
+        tomador = op;
+        tomadorEnd = tomadorIndex + opParts.length - 1;
+        break;
+      }
+    } else if (parts[tomadorIndex] === op) {
+      tomador = op;
       break;
     }
   }
   
-  // Se não encontrou um campo "fun" claro, usar uma estratégia alternativa
-  if (funIndex === -1) {
-    // Assumir uma posição aproximada baseada na observação dos PDFs
-    funIndex = Math.min(tomadorIndex + 4, parts.length - 10);
-    pastaEnd = funIndex - 1;
+  // Se não identificou um operador conhecido, usar a abordagem padrão
+  if (!tomador) {
+    tomador = parts[tomadorIndex];
+    tomadorEnd = tomadorIndex;
   }
   
-  // Extrair a pasta (nome do navio) juntando as partes entre o tomador e o fun
-  let pasta = '';
-  for (let i = tomadorIndex + 1; i <= pastaEnd; i++) {
-    pasta += (pasta ? ' ' : '') + parts[i];
-  }
+  // Determinar os índices dos campos após o tomador
+  // O próximo após o tomador é o início da pasta (nome do navio)
   
-  // Os demais campos estão em sequência após o fun
-  const fun = parts[funIndex] || '';
-  const tur = parts[funIndex + 1] || '';
-  const ter = parts[funIndex + 2] || '';
-  const pagto = parts[funIndex + 3] || '';
+  // Buscar o campo "fun" que é geralmente um número de 3 dígitos (101, 103, 801, 802, etc.)
+  let funIndex = -1;
   
-  // Buscar os valores numéricos no final da linha
-  // A linha geralmente termina com 13 valores numéricos em sequência
-  const numericValues = [];
-  let numStart = -1;
-  
-  // Encontrar o início dos valores numéricos
-  for (let i = parts.length - 1; i >= funIndex + 4; i--) {
-    if (/^[\d.,]+$/.test(parts[i])) {
-      if (numericValues.length === 0) {
-        // Começamos do final, então este é o último número
-        numStart = Math.max(i - 12, funIndex + 4); // Queremos 13 números no total
-      }
-      if (i >= numStart) {
-        numericValues.unshift(parts[i]); // Adicionar ao início do array para manter a ordem
-      }
-      if (numericValues.length >= 13) {
-        break;
-      }
+  for (let i = tomadorEnd + 1; i < parts.length - 13; i++) {
+    if (/^\d{3}$/.test(parts[i])) {
+      funIndex = i;
+      break;
     }
   }
   
-  // Garantir que temos o número correto de valores, preenchendo com zeros se necessário
+  // Se não encontrou o campo fun, temos que fazer uma estimativa
+  if (funIndex === -1) {
+    // Vamos procurar pelos últimos 13 números na linha (valores numéricos)
+    let numericCount = 0;
+    for (let i = parts.length - 1; i > tomadorEnd + 1; i--) {
+      if (/^[\d.,]+$/.test(parts[i])) {
+        numericCount++;
+        if (numericCount === 13) {
+          // 13 números encontrados, o fun deve estar antes
+          funIndex = i - 4; // Estimamos que fun, tur, ter, pagto ocupam 4 posições
+          break;
+        }
+      } else {
+        // Se um número é quebrado, resetamos a contagem
+        numericCount = 0;
+      }
+    }
+    
+    // Se ainda não encontrou, usar uma estimativa baseada no tamanho da linha
+    if (funIndex === -1) {
+      // Estimar que os 13 valores numéricos + fun, tur, ter, pagto = 17 campos do final
+      funIndex = Math.max(tomadorEnd + 1, parts.length - 17);
+    }
+  }
+  
+  // Extrair a pasta (nome do navio) - tudo entre o tomador e o fun
+  let pasta = '';
+  for (let i = tomadorEnd + 1; i < funIndex; i++) {
+    pasta += (pasta ? ' ' : '') + parts[i];
+  }
+  
+  // Agora extrair os campos fun, tur, ter, pagto
+  const fun = parts[funIndex] || '';
+  const tur = funIndex + 1 < parts.length ? parts[funIndex + 1] : '';
+  const ter = funIndex + 2 < parts.length ? parts[funIndex + 2] : '';
+  const pagto = funIndex + 3 < parts.length ? parts[funIndex + 3] : '';
+  
+  // Extrair os valores numéricos (últimos 13 campos)
+  const numericValues = [];
+  for (let i = Math.max(funIndex + 4, parts.length - 13); i < parts.length; i++) {
+    numericValues.push(parts[i]);
+  }
+  
+  // Garantir que temos 13 valores, preenchendo com zeros se necessário
   while (numericValues.length < 13) {
     numericValues.push('0');
   }
@@ -542,17 +577,12 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
                 console.log(`Possível linha de trabalho (contém ${numCount} números): ${line}`);
                 
                 try {
-                  const parts = line.trim().split(/\s+/);
-                  
-                  // Montar um objeto trabalho manualmente se tiver dados suficientes
-                  if (parts.length >= 12) {
-                    const trabalho = extractWorkData(line);
-                    if (trabalho && !trabalhos.some(t => 
-                      t.dia === trabalho.dia && 
-                      t.folha === trabalho.folha
-                    )) {
-                      trabalhos.push(trabalho);
-                    }
+                  const trabalho = extractWorkData(line);
+                  if (trabalho && !trabalhos.some(t => 
+                    t.dia === trabalho.dia && 
+                    t.folha === trabalho.folha
+                  )) {
+                    trabalhos.push(trabalho);
                   }
                 } catch (err) {
                   // Ignorar e continuar
