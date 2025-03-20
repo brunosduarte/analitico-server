@@ -1,9 +1,11 @@
 import { z } from 'zod';
 
-export const ItemExtratoSchema = z.object({
+// Esquema para cada trabalho individual realizado
+export const TrabalhoSchema = z.object({
   dia: z.string(),
   folha: z.string(),
   tomador: z.string(),
+  tomadorNome: z.string().optional(), // Nome da empresa tomadora do serviço
   pasta: z.string(),
   fun: z.string(),
   tur: z.string(),
@@ -46,11 +48,11 @@ export const ExtratoSchema = z.object({
   mes: z.string(),
   ano: z.string(),
   categoria: z.string(),
-  itens: z.array(ItemExtratoSchema),
+  trabalhos: z.array(TrabalhoSchema), // Lista de todos os trabalhos realizados
   folhasComplementos: ResumoExtratoSchema,
   revisadas: ResumoExtratoSchema
 });
 
-export type ItemExtrato = z.infer<typeof ItemExtratoSchema>;
+export type Trabalho = z.infer<typeof TrabalhoSchema>;
 export type ResumoExtrato = z.infer<typeof ResumoExtratoSchema>;
 export type Extrato = z.infer<typeof ExtratoSchema>;

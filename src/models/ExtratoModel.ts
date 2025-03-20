@@ -1,10 +1,11 @@
 import mongoose, { Schema, Document } from 'mongoose';
-import { Extrato, ItemExtrato, ResumoExtrato } from '../schemas/ExtratoSchema';
+import { Extrato, Trabalho, ResumoExtrato } from '../schemas/ExtratoSchema';
 
-const ItemExtratoSchema = new Schema<ItemExtrato>({
+const TrabalhoSchema = new Schema<Trabalho>({
   dia: { type: String, required: true },
   folha: { type: String, required: true },
   tomador: { type: String, required: true },
+  tomadorNome: { type: String }, // Nome da empresa tomadora (opcional)
   pasta: { type: String, required: true },
   fun: { type: String, required: true },
   tur: { type: String, required: true },
@@ -47,7 +48,7 @@ const ExtratoSchema = new Schema<Extrato & Document>({
   mes: { type: String, required: true },
   ano: { type: String, required: true },
   categoria: { type: String, required: true },
-  itens: [ItemExtratoSchema],
+  trabalhos: [TrabalhoSchema], // Array de trabalhos realizados
   folhasComplementos: ResumoExtratoSchema,
   revisadas: ResumoExtratoSchema
 }, { timestamps: true });
@@ -56,6 +57,9 @@ const ExtratoSchema = new Schema<Extrato & Document>({
 ExtratoSchema.index({ matricula: 1, mes: 1, ano: 1 }, { unique: true });
 ExtratoSchema.index({ nome: 1 });
 ExtratoSchema.index({ categoria: 1 });
+ExtratoSchema.index({ "trabalhos.tomador": 1 });
+ExtratoSchema.index({ "trabalhos.pasta": 1 });
+ExtratoSchema.index({ "trabalhos.dia": 1 });
 
 const ExtratoModel = mongoose.model<Extrato & Document>('Extrato', ExtratoSchema);
 

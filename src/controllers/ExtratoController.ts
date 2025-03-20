@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { PDFService } from '../services/PDFService';
 import { z } from 'zod';
+import ExtratoModel from '../models/ExtratoModel';
 
 export class ExtratoController {
   static async uploadExtratoAnalitico(req: Request, res: Response) {
@@ -23,7 +24,7 @@ export class ExtratoController {
           mes: dadosExtrato.mes,
           ano: dadosExtrato.ano,
           categoria: dadosExtrato.categoria,
-          totalItens: dadosExtrato.itens.length
+          totalTrabalhos: dadosExtrato.trabalhos.length
         }
       });
     } catch (error) {
@@ -42,7 +43,8 @@ export class ExtratoController {
         nome: z.string().optional(),
         mes: z.string().optional(),
         ano: z.string().optional(),
-        categoria: z.string().optional()
+        categoria: z.string().optional(),
+        tomador: z.string().optional()
       });
       
       // Validar parâmetros de consulta
@@ -52,8 +54,24 @@ export class ExtratoController {
       }
       
       // Aplicar filtros
-      const filtros = validQuery.data;
-      const extratos = await PDFService.obterExtratos(filtros);
+      const filtros: any = {};
+      const { matricula, nome, mes, ano, categoria, tomador } = validQuery.data;
+      
+      if (matricula) filtros.matricula = matricula;
+      if (nome) filtros.nome = { $regex: nome, $options: 'i' };
+      if (mes) filtros.mes = mes;
+      if (ano) filtros.ano = ano;
+      if (categoria) filtros.categoria = categoria;
+      
+      // Se há filtro por tomador, precisamos ajustar a consulta
+      let extratos;
+      if (tomador) {
+        extratos = await ExtratoModel.find({
+          "trabalhos.tomador": tomador
+        });
+      } else {
+        extratos = await PDFService.obterExtratos(filtros);
+      }
       
       return res.status(200).json({
         success: true,
@@ -64,7 +82,8 @@ export class ExtratoController {
           mes: extrato.mes,
           ano: extrato.ano,
           categoria: extrato.categoria,
-          totalItens: extrato.itens.length
+          totalTrabalhos: extrato.trabalhos?.length || 0,
+          valorTotal: extrato.folhasComplementos?.liquido || 0
         }))
       });
     } catch (error) {
@@ -94,6 +113,54 @@ export class ExtratoController {
         return res.status(500).json({ success: false, message: error.message });
       }
       return res.status(500).json({ success: false, message: 'Erro desconhecido ao obter extrato' });
+    }
+  }
+  
+  static async obterTrabalhosPorTomador(req: Request, res: Response) {
+    try {
+      const tomador = req.params.tomador;
+      
+      if (!tomador) {
+        return res.status(400).json({ success: false, message: 'Código do tomador é obrigatório' });
+      }
+      
+      const trabalhos = await PDFService.obterTrabalhosPorTomador(tomador);
+      
+      return res.status(200).json({
+        success: true,
+        data: trabalhos
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        return res.status(500).json({ success: false, message: error.message });
+      }
+      return res.status(500).json({ success: false, message: 'Erro desconhecido ao obter trabalhos por tomador' });
+    }
+  }
+  
+  static async obterResumoMensal(req: Request, res: Response) {
+    try {
+      const { mes, ano } = req.params;
+      
+      if (!mes || !ano) {
+        return res.status(400).json({ success: false, message: 'Mês e ano são obrigatórios' });
+      }
+      
+      const resumo = await PDFService.obterResumoMensal(mes, ano);
+      
+      if (!resumo) {
+        return res.status(404).json({ success: false, message: 'Não foram encontrados dados para o período informado' });
+      }
+      
+      return res.status(200).json({
+        success: true,
+        data: resumo
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        return res.status(500).json({ success: false, message: error.message });
+      }
+      return res.status(500).json({ success: false, message: 'Erro desconhecido ao obter resumo mensal' });
     }
   }
 }

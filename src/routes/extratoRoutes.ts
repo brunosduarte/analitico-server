@@ -46,4 +46,10 @@ router.get('/analitico', ExtratoController.listarExtratos);
 // Rota para obter um extrato específico por ID
 router.get('/analitico/:id', ExtratoController.obterExtratoPorId);
 
+// Rota para obter trabalhos por tomador
+router.get('/trabalhos/tomador/:tomador', ExtratoController.obterTrabalhosPorTomador);
+
+// Rota para obter resumo mensal
+router.get('/resumo/:mes/:ano', ExtratoController.obterResumoMensal);
+
 export default router;

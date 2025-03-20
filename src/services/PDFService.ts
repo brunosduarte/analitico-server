@@ -37,9 +37,6 @@ export class PDFService {
         throw new Error(`Erro ao processar extrato PDF: ${error.message}`);
       }
       throw new Error('Erro desconhecido ao processar extrato PDF');
-    } finally {
-      // Opcional: Remover o arquivo após processamento
-      // fs.unlinkSync(filePath);
     }
   }
   
@@ -49,5 +46,42 @@ export class PDFService {
   
   static async obterExtratoPorId(id: string): Promise<Extrato | null> {
     return await ExtratoModel.findById(id);
+  }
+  
+  // Métodos adicionais para consultas específicas
+  static async obterTrabalhosPorTomador(tomador: string): Promise<any[]> {
+    const resultados = await ExtratoModel.aggregate([
+      { $unwind: "$trabalhos" },
+      { $match: { "trabalhos.tomador": tomador } },
+      { $project: {
+          matricula: 1,
+          nome: 1,
+          mes: 1,
+          ano: 1,
+          categoria: 1,
+          trabalho: "$trabalhos"
+        }
+      },
+      { $sort: { ano: 1, mes: 1, "trabalho.dia": 1 } }
+    ]);
+    
+    return resultados;
+  }
+  
+  static async obterResumoMensal(mes: string, ano: string): Promise<any> {
+    const resultados = await ExtratoModel.aggregate([
+      { $match: { mes, ano } },
+      { $group: {
+          _id: { mes: "$mes", ano: "$ano" },
+          totalBaseCalculo: { $sum: "$folhasComplementos.baseDeCalculo" },
+          totalLiquido: { $sum: "$folhasComplementos.liquido" },
+          totalFGTS: { $sum: "$folhasComplementos.fgts" },
+          totalTrabalhos: { $sum: { $size: "$trabalhos" } },
+          totalTrabalhadores: { $sum: 1 }
+        }
+      }
+    ]);
+    
+    return resultados[0] || null;
   }
 }
