@@ -75,52 +75,117 @@ const extractHeader = (textContent: string[]): { matricula: string, nome: string
 
   console.log("Extraindo cabeçalho a partir de", textContent.length, "linhas");
   
-  // Procura por padrões nos textos do PDF
-  for (const line of textContent) {
-    console.log("Analisando linha de cabeçalho:", line);
-    
-    // Padrão para matrícula e nome: "XXX-X NOME SOBRENOME"
-    const matriculaNomeMatch = line.match(/(\d+-\d+)\s+(.+)/);
-    if (matriculaNomeMatch) {
-      matricula = matriculaNomeMatch[1].trim();
-      
-      // Extrair o nome sem incluir a categoria (que pode vir a seguir)
-      nome = matriculaNomeMatch[2].trim();
-      // Remover a categoria se estiver junto ao nome
-      const categorias = ['ESTIVADOR', 'ARRUMADOR', 'VIGIA', 'CONFERENTE'];
-      for (const cat of categorias) {
-        if (nome.toUpperCase().includes(cat)) {
-          nome = nome.replace(new RegExp(cat, 'i'), '').trim();
+  // Abordagem específica para formato padrão:
+  // Linha 1: "EXTRATO ANALÍTICO"
+  // Linha 2: "MATRÍCULA-DÍGITO NOME COMPLETO"
+  // Linha 3: "MÊS/ANO"
+  // Linha 4: "CATEGORIA"
+  for (let i = 0; i < textContent.length; i++) {
+    if (textContent[i].trim() === "EXTRATO ANALÍTICO") {
+      // Checar a segunda linha para matrícula e nome
+      if (i + 1 < textContent.length) {
+        const matriculaNomeMatch = textContent[i + 1].match(/^(\d{3}-\d+)\s+(.+)$/);
+        if (matriculaNomeMatch) {
+          matricula = matriculaNomeMatch[1];
+          nome = matriculaNomeMatch[2];
+          console.log(`Encontrado padrão padrão: matricula=${matricula}, nome=${nome}`);
         }
       }
       
-      console.log(`Encontrado matrícula: ${matricula}, nome: ${nome}`);
-    }
-    
-    // Padrão para mês/ano: "MMM/AAAA"
-    const mesAnoMatch = line.match(/(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\/(\d{4})/);
-    if (mesAnoMatch) {
-      mes = mesAnoMatch[1];
-      ano = mesAnoMatch[2];
-      console.log(`Encontrado mês: ${mes}, ano: ${ano}`);
-    }
-    
-    // Categoria do trabalhador
-    if (line.toUpperCase().includes('ESTIVADOR')) {
-      categoria = 'ESTIVADOR';
-      console.log(`Encontrada categoria: ${categoria}`);
-    } else if (line.toUpperCase().includes('ARRUMADOR')) {
-      categoria = 'ARRUMADOR';
-      console.log(`Encontrada categoria: ${categoria}`);
-    } else if (line.toUpperCase().includes('VIGIA')) {
-      categoria = 'VIGIA';
-      console.log(`Encontrada categoria: ${categoria}`);
-    } else if (line.toUpperCase().includes('CONFERENTE')) {
-      categoria = 'CONFERENTE';
-      console.log(`Encontrada categoria: ${categoria}`);
+      // Checar a terceira linha para mês/ano
+      if (i + 2 < textContent.length) {
+        const mesAnoMatch = textContent[i + 2].match(/(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\/(\d{4})/);
+        if (mesAnoMatch) {
+          mes = mesAnoMatch[1];
+          ano = mesAnoMatch[2];
+          console.log(`Encontrado padrão padrão: mês=${mes}, ano=${ano}`);
+        }
+      }
+      
+      // Checar a quarta linha para categoria
+      if (i + 3 < textContent.length) {
+        const cat = textContent[i + 3].trim();
+        if (cat === "ESTIVADOR" || cat === "ARRUMADOR" || cat === "VIGIA" || cat === "CONFERENTE") {
+          categoria = cat;
+          console.log(`Encontrado padrão padrão: categoria=${categoria}`);
+        }
+      }
+      
+      // Se encontramos tudo no formato esperado, podemos retornar
+      if (matricula && nome && mes && ano && categoria) {
+        return { matricula, nome, mes, ano, categoria };
+      }
+      
+      // Se encontramos pelo menos o início do padrão, não precisamos continuar procurando
+      break;
     }
   }
-
+  
+  // Se não encontramos o padrão completo, buscar cada elemento individualmente
+  console.log("Buscando elementos de cabeçalho individualmente...");
+  
+  // Buscar matrícula (padrão XXX-X)
+  for (const line of textContent) {
+    if (!matricula) {
+      const match = line.match(/\b(\d{3}-\d+)\b/);
+      if (match) {
+        matricula = match[1];
+        
+        // Se encontramos a matrícula, o nome geralmente está na mesma linha
+        const afterMatricula = line.substring(line.indexOf(match[1]) + match[1].length).trim();
+        if (afterMatricula && afterMatricula.length > 5) {
+          nome = afterMatricula;
+          // Remover categoria se presente
+          ["ESTIVADOR", "ARRUMADOR", "VIGIA", "CONFERENTE"].forEach(cat => {
+            if (nome.includes(cat)) {
+              nome = nome.replace(cat, "").trim();
+              if (!categoria) categoria = cat;
+            }
+          });
+        }
+        
+        console.log(`Encontrado individual: matricula=${matricula}, possível nome=${nome}`);
+      }
+    }
+    
+    // Buscar mês/ano
+    if (!mes || !ano) {
+      const match = line.match(/(JAN|FEV|MAR|ABR|MAI|JUN|JUL|AGO|SET|OUT|NOV|DEZ)\/(\d{4})/);
+      if (match) {
+        mes = match[1];
+        ano = match[2];
+        console.log(`Encontrado individual: mês=${mes}, ano=${ano}`);
+      }
+    }
+    
+    // Buscar categoria
+    if (!categoria) {
+      const upperLine = line.toUpperCase().trim();
+      if (upperLine === "ESTIVADOR") categoria = "ESTIVADOR";
+      else if (upperLine === "ARRUMADOR") categoria = "ARRUMADOR";
+      else if (upperLine === "VIGIA") categoria = "VIGIA";
+      else if (upperLine === "CONFERENTE") categoria = "CONFERENTE";
+      
+      if (categoria) console.log(`Encontrado individual: categoria=${categoria}`);
+    }
+    
+    // Se encontramos todos os dados, podemos parar
+    if (matricula && nome && mes && ano && categoria) break;
+  }
+  
+  // Buscar nome se ainda não encontramos
+  if (!nome && matricula) {
+    // Procurar linhas longas que podem conter nomes
+    for (const line of textContent) {
+      if (line.length > 5 && /^[A-Z\s]+$/.test(line) && 
+          !line.includes("EXTRATO") && !line.includes("OGMO")) {
+        nome = line.trim();
+        console.log(`Possível nome encontrado: ${nome}`);
+        break;
+      }
+    }
+  }
+  
   // Verificar os campos obrigatórios e adicionar mensagens de debug
   console.log(`Resumo do cabeçalho encontrado: Matrícula=${matricula}, Nome=${nome}, Mês=${mes}, Ano=${ano}, Categoria=${categoria}`);
   
@@ -219,12 +284,6 @@ const extractHeader = (textContent: string[]): { matricula: string, nome: string
   return { matricula, nome, mes, ano, categoria };
 };
 
-// Lista de operadores portuários conhecidos (pode ser expandida conforme necessário)
-const OPERADORES_PORTUARIOS = [
-  'AGM', 'SAGRES', 'TECON', 'TERMASA', 'ROCHA RS', 'LIVENPORT', 'BIANCHINI', 'CTIL',
-  'SERRA MOR', 'RGLP', 'ORION'
-];
-
 // Lista de códigos de função válidos
 const FUNCOES_VALIDAS = [
   '101', '103', '104', '431', '521', '527', '801', '802', '803'
@@ -248,7 +307,77 @@ interface StructuredRecord {
 interface StructuredData {
   headers: string[];
   records: StructuredRecord[];
+  summaryLines?: string[]; // Adicionado para armazenar as linhas de resumo
 }
+
+// Função para identificar a coluna onde os nomes dos navios estão localizados
+const identifyShipNameColumn = (lines: TextElement[][]): {start: number, end: number} | null => {
+  if (lines.length === 0) return null;
+  
+  // Tentar encontrar o padrão de colunas típico
+  // Dia, Folha, Tomador, Pasta, Fun, Tur, Ter, etc.
+  let tomadorColumn = -1;
+  let funColumn = -1;
+  
+  // Procurar por padrões nos textos
+  for (const line of lines) {
+    for (let i = 0; i < line.length; i++) {
+      const text = line[i].text.trim().toUpperCase();
+      
+      // Procurar por possíveis operadores portuários (palavras curtas, em maiúsculas)
+      if (text.length <= 5 && /^[A-Z]+$/.test(text)) {
+        // Verificar se a próxima palavra também poderia fazer parte do operador (ex: "ROCHA RS")
+        if (i + 1 < line.length && line[i + 1].text.length <= 3 && /^[A-Z]+$/.test(line[i + 1].text)) {
+          // Provavelmente um operador de duas palavras
+          tomadorColumn = i;
+        } else {
+          // Provavelmente um operador de uma palavra
+          tomadorColumn = i;
+        }
+      }
+      
+      // Procurar por códigos de função conhecidos
+      for (const fun of FUNCOES_VALIDAS) {
+        if (text === fun) {
+          funColumn = i;
+          break;
+        }
+      }
+      
+      if (tomadorColumn !== -1 && funColumn !== -1) break;
+    }
+    if (tomadorColumn !== -1 && funColumn !== -1) break;
+  }
+  
+  // Se encontramos o tomador e a função, a coluna da pasta está entre eles
+  if (tomadorColumn !== -1 && funColumn !== -1 && tomadorColumn < funColumn - 1) {
+    // Determinar as coordenadas X aproximadas
+    const startX = lines[0][tomadorColumn].x + 3; // Um pouco à direita do tomador
+    const endX = lines[0][funColumn].x - 0.5;     // Um pouco à esquerda da função
+    
+    return { start: startX, end: endX };
+  }
+  
+  // Se não conseguimos determinar pelas posições, usar uma estimativa
+  if (lines[0].length >= 4) {
+    // Assumir que a 4ª coluna (índice 3) é a pasta
+    const pastaX = lines[0][3].x;
+    return { start: pastaX - 0.5, end: pastaX + 10 }; // Ajustar conforme necessário
+  }
+  
+  return null;
+};
+
+// Função para extrair texto da coluna do nome do navio
+const extractTextFromShipColumn = (line: TextElement[], column: {start: number, end: number}): string => {
+  let text = '';
+  for (const element of line) {
+    if (element.x >= column.start && element.x <= column.end) {
+      text += (text ? ' ' : '') + element.text;
+    }
+  }
+  return text;
+};
 
 /**
  * NOVA FUNÇÃO: Extração baseada em estrutura de colunas real do PDF
@@ -315,137 +444,137 @@ const extractStructuredData = (pdfData: any): StructuredData => {
     }
   }
   
-  // 3. Identificar faixas de colunas (coordenadas X comuns)
-  const allXPositions: number[] = [];
+  // 3. Extrair textos completos de todas as linhas
+  const allTextLines: string[] = allLines.map(line => 
+    line.map(item => item.text).join(' ').trim()
+  ).filter(line => line.length > 0);
   
-  for (const line of allLines) {
-    for (const item of line) {
-      allXPositions.push(item.x);
-    }
-  }
+  // 4. Identificar os cabeçalhos e principais seções do documento
+  let headerEndIndex = -1;
+  let summaryStartIndex = -1;
   
-  // Agrupar posições X próximas
-  const columnRanges: {start: number, end: number, center: number}[] = [];
-  allXPositions.sort((a, b) => a - b);
-  
-  let currentStart = allXPositions[0];
-  let currentEnd = currentStart;
-  
-  for (let i = 1; i < allXPositions.length; i++) {
-    if (allXPositions[i] - currentEnd > 0.5) {
-      // Nova coluna
-      columnRanges.push({
-        start: currentStart,
-        end: currentEnd,
-        center: (currentStart + currentEnd) / 2
-      });
-      
-      currentStart = allXPositions[i];
-    }
+  // Procurar pelo início dos dados (primeiro registro que começa com dia)
+  for (let i = 0; i < allTextLines.length; i++) {
+    const line = allTextLines[i];
     
-    currentEnd = allXPositions[i];
-  }
-  
-  // Adicionar a última coluna
-  columnRanges.push({
-    start: currentStart,
-    end: currentEnd,
-    center: (currentStart + currentEnd) / 2
-  });
-  
-  // 4. Identificar os cabeçalhos
-  let headerLines: TextElement[][] = [];
-  let dataStartIndex = -1;
-  
-  // Encontrar onde começam os dados (primeiro registro que começa com número de dia)
-  for (let i = 0; i < allLines.length; i++) {
-    const lineText = allLines[i].map(item => item.text).join(' ');
-    
-    // Verificar se a linha começa com um número que pode ser um dia (1-31)
-    if (/^(0?[1-9]|[12][0-9]|3[01])(\s|\d)/.test(lineText)) {
-      dataStartIndex = i;
+    // Verificar se a linha começa com um padrão de dia (1-31) seguido de folha (6 dígitos)
+    if (/^(0?[1-9]|[12][0-9]|3[01])\s+\d{6}/.test(line)) {
+      headerEndIndex = i;
       break;
     }
   }
   
-  // Os cabeçalhos são todas as linhas antes dos dados
-  if (dataStartIndex > 0) {
-    headerLines = allLines.slice(0, dataStartIndex);
+  // Procurar pelo início da seção de resumo
+  for (let i = allTextLines.length - 1; i >= 0; i--) {
+    const line = allTextLines[i];
     
-    // Extrair texto dos cabeçalhos
-    for (const line of headerLines) {
-      const headerText = line.map(item => item.text).join(' ').trim();
-      if (headerText) {
-        result.headers.push(headerText);
-      }
+    // Verificar se a linha contém "Folhas/Complementos"
+    if (line.includes("Folhas/Complementos")) {
+      // A linha de resumo geralmente está uma linha acima
+      summaryStartIndex = Math.max(0, i - 1);
+      break;
     }
   }
   
-  // Se não encontramos cabeçalhos pelo método acima, usar todos os textos brutos
-  if (result.headers.length === 0) {
-    // Usar os primeiros textos brutos como cabeçalho
-    result.headers = allRawTexts.slice(0, Math.min(20, allRawTexts.length));
-  }
-  
-  // 5. Agrupar linhas em registros de trabalho
-  if (dataStartIndex >= 0) {
-    const dataLines = allLines.slice(dataStartIndex);
-    let currentRecord: StructuredRecord | null = null;
-    
-    for (let i = 0; i < dataLines.length; i++) {
-      const line = dataLines[i];
-      const lineText = line.map(item => item.text).join(' ').trim();
+  // Se não encontrou por "Folhas/Complementos", procurar por linhas com muitos valores numéricos
+  if (summaryStartIndex === -1) {
+    for (let i = allTextLines.length - 10; i < allTextLines.length; i++) {
+      if (i < 0) continue;
       
-      // Verificar se esta linha inicia um novo registro (começa com dia e folha)
-      if (/^(0?[1-9]|[12][0-9]|3[01])\s+\d{6}/.test(lineText)) {
-        // Se já temos um registro em processamento, finalizá-lo
-        if (currentRecord) {
-          result.records.push(currentRecord);
-        }
+      const line = allTextLines[i];
+      if (!line.includes("OGMO") && !line.includes("EMAIL") && 
+          !line.includes("PORTUÁRIO") && !line.includes("SETOR DE")) {
         
-        // Iniciar novo registro
-        currentRecord = {
-          lines: [line],
-          rawText: [lineText]
-        };
-      } 
-      else if (currentRecord) {
-        // Esta linha pode ser continuação do registro atual
+        const parts = line.split(/\s+/);
+        const numericParts = parts.filter(part => /^[\d.,]+$/.test(part));
         
-        // Verificar se a linha está próxima o suficiente da linha anterior
-        const prevLineY = currentRecord.lines[currentRecord.lines.length - 1][0].y;
-        const currentLineY = line[0].y;
-        
-        // Se as linhas estão próximas e esta não é uma linha de rodapé ou cabeçalho
-        if (currentLineY - prevLineY < 3 && 
-            !lineText.includes('EXTRATO ANALÍTICO') && 
-            !lineText.includes('OGMO') &&
-            !lineText.includes('Folhas/Complementos') &&
-            !lineText.includes('Revisadas')) {
-          
-          // Verificar se a próxima linha (se existir) inicia um novo registro
-          const isLastLineOfRecord = (i + 1 < dataLines.length) && 
-                                   /^(0?[1-9]|[12][0-9]|3[01])\s+\d{6}/.test(
-                                     dataLines[i + 1].map(item => item.text).join(' ').trim()
-                                   );
-          
-          // Se a linha não está vazia e não tem muitos números (isso seria mais provavelmente os valores numéricos)
-          const numericCount = lineText.split(/\s+/).filter(word => /^[\d.,]+$/.test(word)).length;
-          
-          // Se parece parte do registro atual, adicionar
-          if (lineText && (numericCount < 10 || isLastLineOfRecord)) {
-            currentRecord.lines.push(line);
-            currentRecord.rawText.push(lineText);
-          }
+        // Se a linha tem muitos valores numéricos consecutivos, é provavelmente uma linha de resumo
+        if (numericParts.length >= 10 && numericParts.length / parts.length >= 0.8) {
+          summaryStartIndex = i;
+          break;
         }
       }
     }
+  }
+  
+  // Definir os índices padrão se não foram encontrados
+  if (headerEndIndex === -1) headerEndIndex = 5; // Assumir que o cabeçalho tem cerca de 5 linhas
+  if (summaryStartIndex === -1) summaryStartIndex = allTextLines.length - 10; // Assumir que o resumo está nas últimas 10 linhas
+  
+  // 5. Separar as diferentes seções do documento
+  const headerLines = allTextLines.slice(0, headerEndIndex);
+  const dataLines = allTextLines.slice(headerEndIndex, summaryStartIndex);
+  const summaryLines = allTextLines.slice(summaryStartIndex);
+  
+  console.log(`Seções identificadas: header=${headerLines.length}, data=${dataLines.length}, summary=${summaryLines.length}`);
+  
+  // Armazenar as linhas de cabeçalho
+  result.headers = headerLines;
+  
+  // Armazenar as linhas de resumo para uso posterior
+  result.summaryLines = summaryLines;
+  
+  // 6. Agrupar linhas de dados em registros
+  let currentRecord: StructuredRecord | null = null;
+  
+  for (let i = 0; i < allLines.length; i++) {
+    const line = allLines[i];
+    const lineText = line.map(item => item.text).join(' ').trim();
     
-    // Adicionar o último registro em processamento
-    if (currentRecord) {
-      result.records.push(currentRecord);
+    // Se a linha está na seção de cabeçalho ou resumo, ignorar
+    if (i < headerEndIndex || i >= summaryStartIndex) continue;
+    
+    // Verificar se esta linha inicia um novo registro (começa com dia e folha)
+    if (/^(0?[1-9]|[12][0-9]|3[01])\s+\d{6}/.test(lineText)) {
+      // Se já temos um registro em processamento, finalizá-lo
+      if (currentRecord) {
+        result.records.push(currentRecord);
+      }
+      
+      // Iniciar novo registro
+      currentRecord = {
+        lines: [line],
+        rawText: [lineText]
+      };
+    } 
+    else if (currentRecord) {
+      // Esta linha pode ser continuação do registro atual
+      
+      // Verificar se a linha está próxima o suficiente da linha anterior
+      const prevLineY = currentRecord.lines[currentRecord.lines.length - 1][0].y;
+      const currentLineY = line[0].y;
+      
+      // Se as linhas estão próximas e esta não é uma linha de rodapé ou cabeçalho
+      if (currentLineY - prevLineY < 3 && 
+          !lineText.includes('EXTRATO ANALÍTICO') && 
+          !lineText.includes('OGMO') &&
+          !lineText.includes('Folhas/Complementos') &&
+          !lineText.includes('Revisadas')) {
+        
+        // Verificar se a próxima linha (se existir) inicia um novo registro
+        const isLastLineOfRecord = (i + 1 < allLines.length) && 
+                                  /^(0?[1-9]|[12][0-9]|3[01])\s+\d{6}/.test(
+                                    allLines[i + 1].map(item => item.text).join(' ').trim()
+                                  );
+        
+        // Se a linha não está vazia e não tem muitos números (isso seria mais provavelmente os valores numéricos)
+        const numericCount = lineText.split(/\s+/).filter(word => /^[\d.,]+$/.test(word)).length;
+        
+        // Se parece parte do registro atual, adicionar
+        if (lineText && (numericCount < 10 || isLastLineOfRecord)) {
+          currentRecord.lines.push(line);
+          currentRecord.rawText.push(lineText);
+        }
+      }
     }
   }
+  
+  // Adicionar o último registro em processamento
+  if (currentRecord) {
+    result.records.push(currentRecord);
+  }
+  
+  console.log(`Total de registros identificados: ${result.records.length}`);
   
   return result;
 };
@@ -483,26 +612,22 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
   let tomadorIndex = 3; // Posição esperada após dia e folha
   let tomadorEnd = 3;
   
-  // Verificar todos os operadores conhecidos, incluindo os compostos
-  for (const op of OPERADORES_PORTUARIOS) {
-    const opParts = op.split(/\s+/);
-    if (opParts.length > 1) {
-      // Verificar operadores compostos como "ROCHA RS"
-      let match = true;
-      for (let i = 0; i < opParts.length && match; i++) {
-        if (i + tomadorIndex >= parts.length || parts[i + tomadorIndex].toUpperCase() !== opParts[i].toUpperCase()) {
-          match = false;
-        }
-      }
+  // Assumir que o tomador está na posição esperada (índice 3)
+  // Verificar se parece um operador portuário (palavras curtas, geralmente em maiúsculas)
+  if (tomadorIndex < parts.length) {
+    // Operadores podem ser compostos como "ROCHA RS" ou simples como "AGM"
+    // Primeiro, verificamos se o próximo token também poderia ser parte do operador
+    if (tomadorIndex + 1 < parts.length && 
+        // Verificar se a próxima palavra é curta (potencialmente parte do operador)
+        parts[tomadorIndex + 1].length <= 5 && 
+        // Verificar se a próxima palavra está em maiúsculas ou tem formato de "RS"
+        (/^[A-Z]+$/.test(parts[tomadorIndex + 1]) || /^[A-Z]{2}$/.test(parts[tomadorIndex + 1]))) {
       
-      if (match) {
-        tomador = op;
-        tomadorEnd = tomadorIndex + opParts.length - 1;
-        break;
-      }
-    } else if (tomadorIndex < parts.length && parts[tomadorIndex] === op) {
-      tomador = op;
-      break;
+      tomador = parts[tomadorIndex] + ' ' + parts[tomadorIndex + 1];
+      tomadorEnd = tomadorIndex + 1;
+    } else {
+      tomador = parts[tomadorIndex];
+      tomadorEnd = tomadorIndex;
     }
   }
   
@@ -609,8 +734,57 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
   
   // 3. Extrair o nome do navio (tudo entre o tomador e a função)
   let pasta = '';
-  for (let i = tomadorEnd + 1; i < funIndex; i++) {
-    pasta += (pasta ? ' ' : '') + parts[i];
+  
+  // Enhanced approach: Check if we can identify the exact column for the ship name
+  // using positional information from all lines in the record
+  const shipNameColumn = identifyShipNameColumn(record.lines);
+  if (shipNameColumn) {
+    // Extract text from all lines that have content in the ship name column
+    for (const line of record.lines) {
+      const shipText = extractTextFromShipColumn(line, shipNameColumn);
+      if (shipText) {
+        pasta += (pasta ? ' ' : '') + shipText;
+      }
+    }
+  }
+  
+  // Segunda abordagem: se a primeira abordagem falhar, usar a lógica original
+  if (!pasta) {
+    // Extrair o texto entre tomador e função
+    for (let i = tomadorEnd + 1; i < funIndex; i++) {
+      pasta += (pasta ? ' ' : '') + parts[i];
+    }
+  }
+  
+  // Terceira abordagem: se as duas primeiras falharem, tentar baseado no texto bruto
+  if (!pasta) {
+    // Procurar por padrões que possam indicar um nome de navio
+    for (const line of record.rawText) {
+      // Pular linhas que contêm nomes de campos ou são muito curtas
+      if (!line.includes('Folha') && !line.includes('Tomador') && line.length > 5) {
+        // Tentar identificar operador portuário e função na linha
+        const opMatch = line.match(/\b(?:[A-Z]{2,5}(?:\s+[A-Z]{2})?)\b/);
+        if (opMatch && opMatch.index !== undefined) {
+          const opName = opMatch[0];
+          const opIndex = opMatch.index;
+          
+          // Procurar por código de função após o operador
+          for (const fun of FUNCOES_VALIDAS) {
+            const funIndex = line.indexOf(fun, opIndex + opName.length);
+            if (funIndex !== -1) {
+              // Extrair o texto entre operador e função
+              const possibleShip = line.substring(opIndex + opName.length, funIndex).trim();
+              if (possibleShip.length > 2) {
+                pasta = possibleShip;
+                break;
+              }
+            }
+          }
+          if (pasta) break;
+        }
+      }
+      if (pasta) break;
+    }
   }
   
   // Se o pasta está vazio, usar um valor padrão
@@ -686,7 +860,7 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
 };
 
 // Função para extrair resumo (Folhas/Complementos e Revisadas)
-const extractSummary = (textContent: string[]): { folhasComplementos: ResumoExtrato, revisadas: ResumoExtrato } | null => {
+const extractSummary = (summaryLines: string[]): { folhasComplementos: ResumoExtrato, revisadas: ResumoExtrato } | null => {
   // Valores padrão para o caso de não encontrar os dados de resumo
   const defaultResumo: ResumoExtrato = {
     baseDeCalculo: 0,
@@ -704,188 +878,111 @@ const extractSummary = (textContent: string[]): { folhasComplementos: ResumoExtr
     fgts: 0
   };
 
-  // Procurar pela linha de total (linha com valores em negrito após a lista de trabalhos)
-  let totalLineIndex = -1;
-  let folhasComplementosLine = '';
-  let revisadasLine = '';
+  // Variáveis para armazenar as linhas encontradas
+  let totalLine = ''; // Linha de soma (somente valores)
+  let folhasComplementosLine = ''; // Linha Folhas/Complementos
+  let revisadasLine = ''; // Linha Revisadas
 
-  // Primeiro, encontrar uma linha com "Folhas/Complementos"
-  for (let i = 0; i < textContent.length; i++) {
-    const line = textContent[i].trim();
-    if (line.includes('Folhas/Complementos')) {
-      // Verificar se a linha também contém valores numéricos
-      const parts = line.split(/\s+/);
+  console.log(`Analisando ${summaryLines.length} linhas de resumo...`);
+  
+  // Primeira busca: encontrar as linhas explicitamente marcadas
+  for (const line of summaryLines) {
+    const trimmedLine = line.trim();
+    
+    // Ignorar linhas de rodapé
+    if (trimmedLine.includes("OGMO") || trimmedLine.includes("EMAIL") || 
+        trimmedLine.includes("PORTUÁRIO") || trimmedLine.includes("SETOR DE") ||
+        /^\d{2}\/\d{2}\/\d{4}/.test(trimmedLine) || /^\d{2}:\d{2}:\d{2}/.test(trimmedLine)) {
+      continue;
+    }
+    
+    // Verificar por linha explícita com "Folhas/Complementos"
+    if (trimmedLine.includes("Folhas/Complementos")) {
+      folhasComplementosLine = trimmedLine;
+      console.log(`Encontrada linha explícita Folhas/Complementos: "${trimmedLine}"`);
+    }
+    
+    // Verificar por linha explícita com "Revisadas"
+    if (trimmedLine.includes("Revisadas")) {
+      revisadasLine = trimmedLine;
+      console.log(`Encontrada linha explícita Revisadas: "${trimmedLine}"`);
+    }
+    
+    // Procurar por possível linha de total (muitos valores numéricos, sem texto identificador)
+    if (!totalLine && !trimmedLine.includes("Folhas/Complementos") && !trimmedLine.includes("Revisadas")) {
+      const parts = trimmedLine.split(/\s+/);
       const numericParts = parts.filter(part => /^[\d.,]+$/.test(part));
       
+      // Se a linha contém apenas ou quase apenas valores numéricos
+      if (numericParts.length >= 10 && numericParts.length / parts.length >= 0.9) {
+        totalLine = trimmedLine;
+        console.log(`Encontrada possível linha de total (apenas valores): "${trimmedLine}"`);
+      }
+    }
+  }
+  
+  // Segunda busca: se não encontramos as linhas explícitas, buscar padrões nos dados
+  // Geralmente: total (somente números) -> Folhas/Complementos -> Revisadas
+  if (!folhasComplementosLine || !revisadasLine) {
+    // Extrair linhas com muitos valores numéricos
+    const numericLines = [];
+    
+    for (const line of summaryLines) {
+      const trimmedLine = line.trim();
+      
+      // Ignorar linhas de rodapé
+      if (trimmedLine.includes("OGMO") || trimmedLine.includes("EMAIL") || 
+          trimmedLine.includes("PORTUÁRIO") || trimmedLine.includes("SETOR DE") ||
+          /^\d{2}\/\d{2}\/\d{4}/.test(trimmedLine) || /^\d{2}:\d{2}:\d{2}/.test(trimmedLine)) {
+        continue;
+      }
+      
+      const parts = trimmedLine.split(/\s+/);
+      const numericParts = parts.filter(part => /^[\d.,]+$/.test(part));
+      
+      // Se a linha tem pelo menos 10 valores numéricos
       if (numericParts.length >= 10) {
-        // A linha já contém os valores
-        folhasComplementosLine = line;
-      } else if (i + 1 < textContent.length) {
-        // Verificar se a próxima linha contém os valores
-        const nextLine = textContent[i + 1].trim();
-        const nextParts = nextLine.split(/\s+/);
-        const nextNumericParts = nextParts.filter(part => /^[\d.,]+$/.test(part));
-        
-        if (nextNumericParts.length >= 10) {
-          folhasComplementosLine = nextLine;
-        }
-      }
-      
-      // Se encontramos a linha Folhas/Complementos, procurar por Revisadas nas linhas seguintes
-      for (let j = i + 1; j < Math.min(i + 5, textContent.length); j++) {
-        const revisadasCandidate = textContent[j].trim();
-        
-        if (revisadasCandidate.includes('Revisadas')) {
-          // Verificar se a linha também contém valores numéricos
-          const revParts = revisadasCandidate.split(/\s+/);
-          const revNumericParts = revParts.filter(part => /^[\d.,]+$/.test(part));
-          
-          if (revNumericParts.length >= 10) {
-            // A linha já contém os valores
-            revisadasLine = revisadasCandidate;
-          } else if (j + 1 < textContent.length) {
-            // Verificar se a próxima linha contém os valores
-            const nextRevLine = textContent[j + 1].trim();
-            const nextRevParts = nextRevLine.split(/\s+/);
-            const nextRevNumericParts = nextRevParts.filter(part => /^[\d.,]+$/.test(part));
-            
-            if (nextRevNumericParts.length >= 10) {
-              revisadasLine = nextRevLine;
-            }
-          }
-          
-          break;
-        }
-      }
-      
-      break;
-    }
-  }
-  
-  // Se não encontrou através da abordagem de texto, procurar linhas numéricas
-  if (!folhasComplementosLine) {
-    // Procurar linhas que contêm apenas números (geralmente são os totais)
-    for (let i = 0; i < textContent.length; i++) {
-      const line = textContent[i].trim();
-      
-      if (line) {
-        const parts = line.split(/\s+/);
-        // Verificar se a linha tem muitos números
-        const numericParts = parts.filter(part => /^[\d.,]+$/.test(part));
-        
-        if (numericParts.length >= 12 && parts.every(part => /^[\d.,]+$/.test(part) || part.trim() === '')) {
-          // Esta linha parece ser um total
-          if (totalLineIndex === -1) {
-            totalLineIndex = i;
-            
-            // Verificar as próximas duas linhas
-            if (i + 1 < textContent.length) {
-              const nextLine = textContent[i + 1].trim();
-              const nextParts = nextLine.split(/\s+/);
-              
-              if (nextLine.includes('Folhas/Complementos') || 
-                  nextParts.filter(part => /^[\d.,]+$/.test(part)).length >= 12) {
-                folhasComplementosLine = nextLine;
-              }
-            }
-            
-            if (i + 2 < textContent.length) {
-              const nextNextLine = textContent[i + 2].trim();
-              const nextNextParts = nextNextLine.split(/\s+/);
-              
-              if (nextNextLine.includes('Revisadas') || 
-                  nextNextParts.filter(part => /^[\d.,]+$/.test(part)).length >= 12) {
-                revisadasLine = nextNextLine;
-              }
-            }
-            
-            break;
-          }
-        }
-      }
-    }
-  }
-  
-  // Se ainda não encontramos uma linha específica para Folhas/Complementos,
-  // vamos procurar pelo último conjunto de linhas numéricas no documento
-  if (!folhasComplementosLine) {
-    let lastNumericLineIndex = -1;
-    
-    // Procurar da última linha para a primeira
-    for (let i = textContent.length - 1; i >= 0; i--) {
-      const line = textContent[i].trim();
-      
-      if (line) {
-        const parts = line.split(/\s+/);
-        const numericParts = parts.filter(part => /^[\d.,]+$/.test(part));
-        
-        if (numericParts.length >= 10) {
-          lastNumericLineIndex = i;
-          break;
-        }
+        numericLines.push(trimmedLine);
       }
     }
     
-    // Se encontramos uma linha numérica, verificar as linhas ao redor
-    if (lastNumericLineIndex !== -1) {
-      // Verificar as linhas adjacentes para ver se contêm "Folhas/Complementos" ou "Revisadas"
-      for (let i = Math.max(0, lastNumericLineIndex - 3); i <= Math.min(textContent.length - 1, lastNumericLineIndex + 3); i++) {
-        const line = textContent[i].trim();
-        
-        if (line.includes('Folhas/Complementos')) {
-          // Verificar se a próxima linha contém valores numéricos
-          if (i + 1 < textContent.length) {
-            const nextLine = textContent[i + 1].trim();
-            const nextParts = nextLine.split(/\s+/);
-            
-            if (nextParts.filter(part => /^[\d.,]+$/.test(part)).length >= 10) {
-              folhasComplementosLine = nextLine;
-            }
-          }
-        } else if (line.includes('Revisadas')) {
-          // Verificar se a próxima linha contém valores numéricos
-          if (i + 1 < textContent.length) {
-            const nextLine = textContent[i + 1].trim();
-            const nextParts = nextLine.split(/\s+/);
-            
-            if (nextParts.filter(part => /^[\d.,]+$/.test(part)).length >= 10) {
-              revisadasLine = nextLine;
-            }
-          }
-        }
+    console.log(`Encontradas ${numericLines.length} linhas com muitos valores numéricos`);
+    
+    // Se encontramos pelo menos uma linha com muitos valores numéricos
+    if (numericLines.length >= 1) {
+      // Se não temos a linha de total, usar a primeira linha numérica
+      if (!totalLine) {
+        totalLine = numericLines[0];
+        console.log(`Definindo primeira linha numérica como total: "${totalLine}"`);
       }
       
-      // Se ainda não temos linhas específicas, usar as últimas linhas numéricas
-      if (!folhasComplementosLine) {
-        // Encontrar as últimas 3 linhas com muitos valores numéricos
-        const numericLines = [];
-        
-        for (let i = textContent.length - 1; i >= 0 && numericLines.length < 3; i--) {
-          const line = textContent[i].trim();
-          
-          if (line) {
-            const parts = line.split(/\s+/);
-            const numericParts = parts.filter(part => /^[\d.,]+$/.test(part));
-            
-            if (numericParts.length >= 10) {
-              numericLines.unshift(line); // Adicionar ao início para manter a ordem
-            }
-          }
-        }
-        
-        // Se temos pelo menos duas linhas, assumir que são total e Folhas/Complementos
-        if (numericLines.length >= 2) {
-          folhasComplementosLine = numericLines[1]; // Segunda linha numérica de baixo para cima
-          
-          if (numericLines.length >= 3) {
-            revisadasLine = numericLines[2]; // Terceira linha numérica de baixo para cima
-          }
-        }
+      // Se não temos a linha de Folhas/Complementos e temos pelo menos 2 linhas numéricas
+      if (!folhasComplementosLine && numericLines.length >= 2) {
+        folhasComplementosLine = numericLines[1];
+        console.log(`Definindo segunda linha numérica como Folhas/Complementos: "${folhasComplementosLine}"`);
+      } 
+      // Se não temos mais de uma linha numérica, usar a linha de total como Folhas/Complementos
+      else if (!folhasComplementosLine) {
+        folhasComplementosLine = totalLine;
+        console.log(`Usando linha de total como Folhas/Complementos: "${folhasComplementosLine}"`);
+      }
+      
+      // Se não temos a linha de Revisadas e temos pelo menos 3 linhas numéricas
+      if (!revisadasLine && numericLines.length >= 3) {
+        revisadasLine = numericLines[2];
+        console.log(`Definindo terceira linha numérica como Revisadas: "${revisadasLine}"`);
+      }
+      // Se não temos a linha de Revisadas mas precisamos de uma
+      else if (!revisadasLine) {
+        // Criar uma linha de zeros se não temos uma linha de revisadas
+        const zeros = "0,00 ".repeat(13).trim();
+        revisadasLine = `Revisadas ${zeros}`;
+        console.log(`Criando linha de Revisadas com zeros: "${revisadasLine}"`);
       }
     }
   }
   
-  // Se não encontrou as linhas, retornar null para calcular os totais a partir dos trabalhos
+  // Se não foi possível encontrar as linhas, retornar null para calcular os totais a partir dos trabalhos
   if (!folhasComplementosLine) {
     console.log('Não foi possível encontrar a linha de Folhas/Complementos. Usando valores calculados.');
     return null;
@@ -893,7 +990,10 @@ const extractSummary = (textContent: string[]): { folhasComplementos: ResumoExtr
 
   // Extrair os valores numéricos das linhas
   const extractValues = (line: string): number[] => {
-    return line.split(/\s+/)
+    // Remover texto não numérico como "Folhas/Complementos" ou "Revisadas"
+    const numericPart = line.replace(/Folhas\/Complementos|Revisadas/g, '').trim();
+    
+    return numericPart.split(/\s+/)
       .filter(part => /^[\d.,]+$/.test(part))
       .map(normalizeNumber);
   };
@@ -901,6 +1001,8 @@ const extractSummary = (textContent: string[]): { folhasComplementos: ResumoExtr
   const folhasValues = extractValues(folhasComplementosLine);
   const revisadasValues = revisadasLine ? extractValues(revisadasLine) : Array(13).fill(0);
 
+  console.log(`Valores extraídos - Folhas/Complementos: ${folhasValues.length} valores, Revisadas: ${revisadasValues.length} valores`);
+  
   // Garantir que temos o número correto de valores
   while (folhasValues.length < 13) folhasValues.push(0);
   while (revisadasValues.length < 13) revisadasValues.push(0);
@@ -957,17 +1059,13 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
     
     pdfParser.on('pdfParser_dataReady', (pdfData: any) => {
       try {
-        console.log(`PDF carregado, iniciando extração usando nova abordagem estruturada...`);
+        console.log(`PDF carregado, iniciando extração usando abordagem estruturada baseada em seções...`);
         
         // Extrair dados estruturados do PDF
         const structuredData = extractStructuredData(pdfData);
         
-        // Unir cabeçalhos em um array de strings para o extractHeader
-        const headerTexts = structuredData.headers;
-        console.log(`Identificados ${headerTexts.length} linhas de cabeçalho`);
-        
         // Extrair informações do cabeçalho
-        const { matricula, nome, mes, ano, categoria } = extractHeader(headerTexts);
+        const { matricula, nome, mes, ano, categoria } = extractHeader(structuredData.headers);
         console.log(`Dados de cabeçalho: ${matricula}, ${nome}, ${mes}/${ano}, ${categoria}`);
         
         // Extrair dados de trabalho de cada registro
@@ -998,14 +1096,13 @@ export const parseExtratoAnalitico = (filePath: string): Promise<Extrato> => {
         
         console.log(`Total de trabalhos extraídos: ${trabalhos.length}`);
         
-        // Converter os registros em linhas de texto para o extractSummary
-        const allLines = structuredData.records.flatMap(record => record.rawText);
-        
         // Extrair dados de resumo ou calculá-los a partir dos trabalhos
         let folhasComplementos: ResumoExtrato;
         let revisadas: ResumoExtrato;
         
-        const summaryData = extractSummary(allLines);
+        // Usar as linhas de resumo extraídas da seção específica
+        const summaryData = structuredData.summaryLines ? 
+                            extractSummary(structuredData.summaryLines) : null;
         
         if (!summaryData) {
           console.log('Calculando valores de resumo a partir dos trabalhos...');
