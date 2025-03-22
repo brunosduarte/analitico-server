@@ -9,6 +9,12 @@ export class PDFParserError extends Error {
   }
 }
 
+// Lista de tomadores conhecidos para melhorar a identificação
+const TOMADORES_CONHECIDOS = [
+  'AGM', 'SAGRES', 'TECON', 'TERMASA', 'ROCHA RS', 'LIVENPORT', 'BIANCHINI',
+  'SERRA MOR', 'RGLP', 'ORION', 'CTIL'
+];
+
 // Função para normalizar valores numéricos e evitar NaN
 const normalizeNumber = (value: string | number): number => {
   // Se o valor já for um número, verificar se é NaN ou válido
@@ -325,15 +331,8 @@ const identifyShipNameColumn = (lines: TextElement[][]): {start: number, end: nu
       const text = line[i].text.trim().toUpperCase();
       
       // Procurar por possíveis operadores portuários (palavras curtas, em maiúsculas)
-      if (text.length <= 5 && /^[A-Z]+$/.test(text)) {
-        // Verificar se a próxima palavra também poderia fazer parte do operador (ex: "ROCHA RS")
-        if (i + 1 < line.length && line[i + 1].text.length <= 3 && /^[A-Z]+$/.test(line[i + 1].text)) {
-          // Provavelmente um operador de duas palavras
-          tomadorColumn = i;
-        } else {
-          // Provavelmente um operador de uma palavra
-          tomadorColumn = i;
-        }
+      if (text.length <= 5 && /^[A-Z]+$/.test(text) && TOMADORES_CONHECIDOS.includes(text)) {
+        tomadorColumn = i;
       }
       
       // Procurar por códigos de função conhecidos
@@ -579,6 +578,66 @@ const extractStructuredData = (pdfData: any): StructuredData => {
   return result;
 };
 
+// Função para extrair o tomador correto de um registro
+const extractTomador = (record: StructuredRecord): string => {
+  // Combinar todas as linhas do registro
+  const combinedText = record.rawText.join(' ');
+  
+  // Procurar por tomadores conhecidos nas linhas do registro
+  for (const tomador of TOMADORES_CONHECIDOS) {
+    const index = combinedText.indexOf(tomador);
+    if (index !== -1) {
+      return tomador;
+    }
+  }
+  
+  // Se não encontrar um tomador conhecido, usar a lógica original
+  const firstLine = record.rawText[0];
+  const parts = firstLine.split(/\s+/);
+  
+  if (parts.length > 3) {
+    // Geralmente o tomador está na posição 3 (após dia e folha)
+    return parts[3];
+  }
+  
+  return "TOMADOR DESCONHECIDO";
+};
+
+// Função para limpar e extrair apenas o nome da embarcação
+const cleanShipName = (text: string): string => {
+  // Remover códigos de função, turno, terno, etc.
+  let cleaned = text;
+  
+  // Remover códigos de função (101, 103, etc.)
+  for (const fun of FUNCOES_VALIDAS) {
+    cleaned = cleaned.replace(new RegExp(`\\b${fun}\\b`, 'g'), ' ');
+  }
+  
+  // Remover turnos (A, B, C, D)
+  for (const tur of TURNOS_VALIDOS) {
+    cleaned = cleaned.replace(new RegExp(`\\b${tur}\\b`, 'g'), ' ');
+  }
+  
+  // Remover ternos (1, 2, 3)
+  cleaned = cleaned.replace(/\b[1-3]\b/g, ' ');
+  
+  // Remover datas de pagamento (DD/MM)
+  cleaned = cleaned.replace(/\b\d{2}\/\d{2}\b/g, ' ');
+  
+  // Remover qualquer tomador conhecido
+  for (const tomador of TOMADORES_CONHECIDOS) {
+    cleaned = cleaned.replace(new RegExp(`\\b${tomador}\\b`, 'g'), ' ');
+  }
+  
+  // Remover o código "00" que aparece após a folha
+  cleaned = cleaned.replace(/\b00\b/g, ' ');
+  
+  // Remover múltiplos espaços
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  
+  return cleaned;
+};
+
 /**
  * NOVA FUNÇÃO: Processar um registro completo (todas as linhas que pertencem a um trabalho)
  * Esta função lida com casos onde o nome do navio ocupa múltiplas linhas
@@ -597,6 +656,9 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
   const dia = diaFolhaMatch[1];
   const folha = `${diaFolhaMatch[2]}-${diaFolhaMatch[3]}`;
   
+  // Extrair tomador usando a função melhorada
+  const tomador = extractTomador(record);
+  
   // Combinar todas as linhas em um único texto para processamento
   const combinedText = record.rawText.join(' ');
   const parts = combinedText.split(/\s+/);
@@ -607,46 +669,11 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
     return null;
   }
   
-  // 1. Identificar o tomador (operador portuário)
-  let tomador = '';
-  let tomadorIndex = 3; // Posição esperada após dia e folha
-  let tomadorEnd = 3;
-  
-  // Assumir que o tomador está na posição esperada (índice 3)
-  // Verificar se parece um operador portuário (palavras curtas, geralmente em maiúsculas)
-  if (tomadorIndex < parts.length) {
-    // Operadores podem ser compostos como "ROCHA RS" ou simples como "AGM"
-    // Primeiro, verificamos se o próximo token também poderia ser parte do operador
-    if (tomadorIndex + 1 < parts.length && 
-        // Verificar se a próxima palavra é curta (potencialmente parte do operador)
-        parts[tomadorIndex + 1].length <= 5 && 
-        // Verificar se a próxima palavra está em maiúsculas ou tem formato de "RS"
-        (/^[A-Z]+$/.test(parts[tomadorIndex + 1]) || /^[A-Z]{2}$/.test(parts[tomadorIndex + 1]))) {
-      
-      tomador = parts[tomadorIndex] + ' ' + parts[tomadorIndex + 1];
-      tomadorEnd = tomadorIndex + 1;
-    } else {
-      tomador = parts[tomadorIndex];
-      tomadorEnd = tomadorIndex;
-    }
-  }
-  
-  // Se não identificou um operador conhecido, usar o que estiver na posição esperada
-  if (!tomador && tomadorIndex < parts.length) {
-    tomador = parts[tomadorIndex];
-  }
-  
-  // 2. Identificar a posição da função, turno, terno e data de pagamento
-  // Estes campos têm formatos reconhecíveis:
-  // - Função: código numérico de 3 dígitos (101, 103, 802, etc.)
-  // - Turno: uma letra de A-D
-  // - Terno: um número de 1-3
-  // - Pagto: no formato DD/MM
-  
+  // Identificar a posição da função, turno, terno e data de pagamento
   let funIndex = -1;
   
   // Estratégia A: Procurar a sequência completa de fun, tur, ter, pagto
-  for (let i = tomadorEnd + 1; i < parts.length - 3; i++) {
+  for (let i = 0; i < parts.length - 3; i++) {
     if (FUNCOES_VALIDAS.includes(parts[i]) && 
         i + 1 < parts.length && TURNOS_VALIDOS.includes(parts[i + 1]) && 
         i + 2 < parts.length && /^[1-3]$/.test(parts[i + 2]) && 
@@ -659,7 +686,7 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
   
   // Estratégia B: Procurar somente a função e turno
   if (funIndex === -1) {
-    for (let i = tomadorEnd + 1; i < parts.length - 1; i++) {
+    for (let i = 0; i < parts.length - 1; i++) {
       if (FUNCOES_VALIDAS.includes(parts[i]) && 
           i + 1 < parts.length && TURNOS_VALIDOS.includes(parts[i + 1])) {
         
@@ -671,7 +698,7 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
   
   // Estratégia C: Procurar a data de pagamento e trabalhar de trás para frente
   if (funIndex === -1) {
-    for (let i = parts.length - 1; i > tomadorEnd + 3; i--) {
+    for (let i = parts.length - 1; i > 3; i--) {
       if (/^\d{2}\/\d{2}$/.test(parts[i])) {
         // Verificar se antes temos terno, turno e função
         if (i - 1 >= 0 && /^[1-3]$/.test(parts[i - 1]) && 
@@ -702,7 +729,7 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
       const firstNumericIndex = numericIndices[numericIndices.length - 13];
       
       // A sequência fun, tur, ter, pagto deve estar antes
-      if (firstNumericIndex > tomadorEnd + 4) {
+      if (firstNumericIndex > 4) {
         funIndex = firstNumericIndex - 4; // 4 posições antes dos valores
       }
     }
@@ -710,7 +737,7 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
   
   // Estratégia E: Se todas as outras falharem, fazer uma estimativa
   if (funIndex === -1) {
-    const textWithoutHeader = parts.slice(tomadorEnd + 1).join(' ');
+    const textWithoutHeader = parts.slice(4).join(' ');
     
     // Procurar por padrões conhecidos
     for (const fun of FUNCOES_VALIDAS) {
@@ -718,7 +745,7 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
       if (funPos !== -1) {
         // Contar palavras até esta posição
         const wordsBefore = textWithoutHeader.substring(0, funPos).split(/\s+/).filter(w => w.length > 0).length;
-        funIndex = tomadorEnd + 1 + wordsBefore;
+        funIndex = 4 + wordsBefore;
         break;
       }
     }
@@ -726,69 +753,86 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
   
   // Se ainda não encontramos, usar uma estimativa com base no tamanho
   if (funIndex === -1) {
-    funIndex = Math.min(tomadorEnd + 5, parts.length - 17); // Deixar espaço para fun, tur, ter, pagto e 13 valores
+    funIndex = Math.min(5, parts.length - 17); // Deixar espaço para fun, tur, ter, pagto e 13 valores
   }
   
   // Garantir que funIndex está dentro dos limites
-  funIndex = Math.max(tomadorEnd + 1, Math.min(funIndex, parts.length - 4));
+  funIndex = Math.max(4, Math.min(funIndex, parts.length - 4));
   
-  // 3. Extrair o nome do navio (tudo entre o tomador e a função)
+  // Extrair o nome do navio (pasta)
   let pasta = '';
   
-  // Enhanced approach: Check if we can identify the exact column for the ship name
-  // using positional information from all lines in the record
+  // Abordagem 1: Usar a identificação da coluna do nome do navio
   const shipNameColumn = identifyShipNameColumn(record.lines);
   if (shipNameColumn) {
-    // Extract text from all lines that have content in the ship name column
+    const shipTexts = [];
     for (const line of record.lines) {
       const shipText = extractTextFromShipColumn(line, shipNameColumn);
-      if (shipText) {
-        pasta += (pasta ? ' ' : '') + shipText;
+      if (shipText && shipText.trim().length > 0) {
+        shipTexts.push(shipText);
       }
     }
-  }
-  
-  // Segunda abordagem: se a primeira abordagem falhar, usar a lógica original
-  if (!pasta) {
-    // Extrair o texto entre tomador e função
-    for (let i = tomadorEnd + 1; i < funIndex; i++) {
-      pasta += (pasta ? ' ' : '') + parts[i];
+    
+    // Juntar todos os textos e limpar
+    if (shipTexts.length > 0) {
+      pasta = cleanShipName(shipTexts.join(' '));
     }
   }
   
-  // Terceira abordagem: se as duas primeiras falharem, tentar baseado no texto bruto
-  if (!pasta) {
-    // Procurar por padrões que possam indicar um nome de navio
-    for (const line of record.rawText) {
-      // Pular linhas que contêm nomes de campos ou são muito curtas
-      if (!line.includes('Folha') && !line.includes('Tomador') && line.length > 5) {
-        // Tentar identificar operador portuário e função na linha
-        const opMatch = line.match(/\b(?:[A-Z]{2,5}(?:\s+[A-Z]{2})?)\b/);
-        if (opMatch && opMatch.index !== undefined) {
-          const opName = opMatch[0];
-          const opIndex = opMatch.index;
-          
-          // Procurar por código de função após o operador
-          for (const fun of FUNCOES_VALIDAS) {
-            const funIndex = line.indexOf(fun, opIndex + opName.length);
-            if (funIndex !== -1) {
-              // Extrair o texto entre operador e função
-              const possibleShip = line.substring(opIndex + opName.length, funIndex).trim();
-              if (possibleShip.length > 2) {
-                pasta = possibleShip;
-                break;
-              }
-            }
-          }
-          if (pasta) break;
+  // Abordagem 2: Procurar padrões específicos
+  if (!pasta || pasta.length < 3) {
+    // Procurar por "(PORTO NOVO)" ou "(ESTALEIRO)"
+    const portoNovoMatch = combinedText.match(/([A-Z][A-Z\s]+)(?=\s+\(PORTO\s+NOVO\))/i);
+    const estaleiroMatch = combinedText.match(/([A-Z][A-Z\s]+)(?=\s+\(ESTALEIRO\))/i);
+    
+    if (portoNovoMatch && portoNovoMatch[1].length > 3) {
+      pasta = cleanShipName(portoNovoMatch[1].trim() + ' (PORTO NOVO)');
+    }
+    else if (estaleiroMatch && estaleiroMatch[1].length > 3) {
+      pasta = cleanShipName(estaleiroMatch[1].trim() + ' (ESTALEIRO)');
+    }
+  }
+  
+  // Abordagem 3: Texto entre tomador e função
+  if (!pasta || pasta.length < 3) {
+    const tomadorIndex = combinedText.indexOf(tomador);
+    if (tomadorIndex !== -1) {
+      // Texto após o tomador
+      const afterTomador = combinedText.substring(tomadorIndex + tomador.length);
+      
+      // Procurar pela primeira ocorrência de função
+      let funPos = afterTomador.length;
+      for (const fun of FUNCOES_VALIDAS) {
+        const pos = afterTomador.indexOf(fun);
+        if (pos !== -1 && pos < funPos) {
+          funPos = pos;
         }
       }
-      if (pasta) break;
+      
+      if (funPos < afterTomador.length) {
+        const between = afterTomador.substring(0, funPos).trim();
+        pasta = cleanShipName(between);
+      }
     }
   }
   
-  // Se o pasta está vazio, usar um valor padrão
-  if (!pasta) {
+  // Última alternativa: pegar texto entre folha e função
+  if (!pasta || pasta.length < 3) {
+    // Pular dia, folha e remover tomador
+    let shipParts = [];
+    for (let i = 4; i < funIndex; i++) {
+      if (!parts[i].includes(tomador)) {
+        shipParts.push(parts[i]);
+      }
+    }
+    
+    if (shipParts.length > 0) {
+      pasta = cleanShipName(shipParts.join(' '));
+    }
+  }
+  
+  // Se o pasta ainda estiver vazio, usar um valor padrão
+  if (!pasta || pasta.length < 3) {
     pasta = "NAVIO NÃO IDENTIFICADO";
     console.log(`AVISO: Nome do navio não identificado para o trabalho dia ${dia}, folha ${folha}`);
   }
