@@ -282,9 +282,9 @@ const extractHeader = (textContent: string[]): { matricula: string, nome: string
     
     if (!matricula) matricula = "000-0"; // Valor padrão
     if (!nome) nome = "NOME NÃO ENCONTRADO";
-    if (!mes) mes = "JAN"; // Valor padrão
-    if (!ano) ano = "2023"; // Valor padrão
-    if (!categoria) categoria = "ESTIVADOR"; // Valor padrão
+    if (!mes) mes = "MES"; // Valor padrão
+    if (!ano) ano = "0000"; // Valor padrão
+    if (!categoria) categoria = "CATEGORIA"; // Valor padrão
   }
 
   return { matricula, nome, mes, ano, categoria };
@@ -603,17 +603,26 @@ const extractTomador = (record: StructuredRecord): string => {
   return "TOMADOR DESCONHECIDO";
 };
 
-// Função para limpar e extrair apenas o nome da embarcação
+// Função para limpar nomes de navios específica para os problemas encontrados
 const cleanShipName = (text: string): string => {
-  // Remover códigos de função, turno, terno, etc.
+  // Não queremos perder os sufixos "(PORTO NOVO)" ou "(ESTALEIRO)"
+  const hasPortoNovo = text.includes("(PORTO NOVO)");
+  const hasEstaleiro = text.includes("(ESTALEIRO)");
+  
+  // Remover códigos de função, turnos, etc.
   let cleaned = text;
   
-  // Remover códigos de função (101, 103, etc.)
+  // Remover os tomadores conhecidos
+  for (const tomador of TOMADORES_CONHECIDOS) {
+    cleaned = cleaned.replace(new RegExp(`\\b${tomador}\\b`, 'g'), ' ');
+  }
+  
+  // Remover códigos de função
   for (const fun of FUNCOES_VALIDAS) {
     cleaned = cleaned.replace(new RegExp(`\\b${fun}\\b`, 'g'), ' ');
   }
   
-  // Remover turnos (A, B, C, D)
+  // Remover turnos
   for (const tur of TURNOS_VALIDOS) {
     cleaned = cleaned.replace(new RegExp(`\\b${tur}\\b`, 'g'), ' ');
   }
@@ -624,24 +633,169 @@ const cleanShipName = (text: string): string => {
   // Remover datas de pagamento (DD/MM)
   cleaned = cleaned.replace(/\b\d{2}\/\d{2}\b/g, ' ');
   
-  // Remover qualquer tomador conhecido
-  for (const tomador of TOMADORES_CONHECIDOS) {
-    cleaned = cleaned.replace(new RegExp(`\\b${tomador}\\b`, 'g'), ' ');
-  }
-  
   // Remover o código "00" que aparece após a folha
   cleaned = cleaned.replace(/\b00\b/g, ' ');
   
   // Remover múltiplos espaços
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
   
+  // Garantir que os sufixos importantes estão presentes se estavam no texto original
+  if (hasPortoNovo && !cleaned.includes("(PORTO NOVO)")) {
+    cleaned += " (PORTO NOVO)";
+  } else if (hasEstaleiro && !cleaned.includes("(ESTALEIRO)")) {
+    cleaned += " (ESTALEIRO)";
+  }
+  
   return cleaned;
 };
 
-/**
- * NOVA FUNÇÃO: Processar um registro completo (todas as linhas que pertencem a um trabalho)
- * Esta função lida com casos onde o nome do navio ocupa múltiplas linhas
- */
+// Função simplificada para extrair o nome do navio
+const extractShipName = (record: StructuredRecord): string => {
+  // Texto completo do registro
+  const allText = record.rawText.join(' ');
+  
+  // 1. Padrão específico: NOME (PORTO NOVO) ou NOME (ESTALEIRO)
+  const portNovoMatch = /\b([A-Z][A-Z\s]+)\s+\(PORTO\s+NOVO\)/i.exec(allText);
+  if (portNovoMatch && portNovoMatch[1].length > 2) {
+    return cleanShipName(portNovoMatch[0]);
+  }
+  
+  const estaleiroMatch = /\b([A-Z][A-Z\s]+)\s+\(ESTALEIRO\)/i.exec(allText);
+  if (estaleiroMatch && estaleiroMatch[1].length > 2) {
+    return cleanShipName(estaleiroMatch[0]);
+  }
+  
+  // 2. Se o texto contém "(PORTO NOVO)" sem o nome antes
+  if (allText.includes("(PORTO NOVO)")) {
+    // Examinar cada linha individualmente
+    for (const line of record.rawText) {
+      // Se a linha tem "(PORTO NOVO)"
+      if (line.includes("(PORTO NOVO)")) {
+        const portoNovoIndex = line.indexOf("(PORTO NOVO)");
+        if (portoNovoIndex > 0) {
+          // Pegar tudo antes de "(PORTO NOVO)" na mesma linha
+          const beforeText = line.substring(0, portoNovoIndex).trim();
+          // Extrair a última palavra substantiva
+          const lastWord = beforeText.split(/\s+/).filter(w => 
+            w.length > 2 && /^[A-Z]/.test(w) && 
+            !FUNCOES_VALIDAS.includes(w) && 
+            !TURNOS_VALIDOS.includes(w)
+          ).pop();
+          
+          if (lastWord) {
+            return cleanShipName(`${lastWord} (PORTO NOVO)`);
+          }
+        }
+      } else {
+        // Procurar por potenciais nomes de navios nas outras linhas
+        const words = line.split(/\s+/).filter(w => 
+          w.length > 2 && /^[A-Z]/.test(w) && 
+          !FUNCOES_VALIDAS.includes(w) && 
+          !TURNOS_VALIDOS.includes(w) &&
+          !TOMADORES_CONHECIDOS.includes(w)
+        );
+        
+        if (words.length > 0) {
+          const potentialName = words.join(' ');
+          if (potentialName.length > 3) {
+            return cleanShipName(`${potentialName} (PORTO NOVO)`);
+          }
+        }
+      }
+    }
+    
+    // Se não encontrou nome, retorna apenas o sufixo
+    return "(PORTO NOVO)";
+  }
+  
+  // 3. Similar para "(ESTALEIRO)"
+  if (allText.includes("(ESTALEIRO)")) {
+    // Examinar cada linha individualmente
+    for (const line of record.rawText) {
+      // Se a linha tem "(ESTALEIRO)"
+      if (line.includes("(ESTALEIRO)")) {
+        const estaleiroIndex = line.indexOf("(ESTALEIRO)");
+        if (estaleiroIndex > 0) {
+          // Pegar tudo antes de "(ESTALEIRO)" na mesma linha
+          const beforeText = line.substring(0, estaleiroIndex).trim();
+          // Extrair a última palavra substantiva
+          const lastWord = beforeText.split(/\s+/).filter(w => 
+            w.length > 2 && /^[A-Z]/.test(w) && 
+            !FUNCOES_VALIDAS.includes(w) && 
+            !TURNOS_VALIDOS.includes(w)
+          ).pop();
+          
+          if (lastWord) {
+            return cleanShipName(`${lastWord} (ESTALEIRO)`);
+          }
+        }
+      } else {
+        // Procurar por potenciais nomes de navios nas outras linhas
+        const words = line.split(/\s+/).filter(w => 
+          w.length > 2 && /^[A-Z]/.test(w) && 
+          !FUNCOES_VALIDAS.includes(w) && 
+          !TURNOS_VALIDOS.includes(w) &&
+          !TOMADORES_CONHECIDOS.includes(w)
+        );
+        
+        if (words.length > 0) {
+          const potentialName = words.join(' ');
+          if (potentialName.length > 3) {
+            return cleanShipName(`${potentialName} (ESTALEIRO)`);
+          }
+        }
+      }
+    }
+    
+    // Se não encontrou nome, retorna apenas o sufixo
+    return "(ESTALEIRO)";
+  }
+  
+  // 4. Abordagem baseada em posição de linha
+  if (record.lines.length > 1) {
+    // Na maioria dos layouts, o nome do navio está entre o tomador e a função
+    // Tentar extrair das linhas do meio (não a primeira nem a última)
+    for (let i = 1; i < record.lines.length - 1; i++) {
+      const line = record.lines[i];
+      // Filtrar elementos que parecem nomes (não números, não códigos, etc.)
+      const nameElements = line.filter(el => 
+        el.text.length > 2 && 
+        /^[A-Z]/.test(el.text) && 
+        !/^\d+/.test(el.text) && 
+        !FUNCOES_VALIDAS.includes(el.text) && 
+        !TURNOS_VALIDOS.includes(el.text) &&
+        !TOMADORES_CONHECIDOS.includes(el.text)
+      );
+      
+      if (nameElements.length > 0) {
+        return cleanShipName(nameElements.map(el => el.text).join(' '));
+      }
+    }
+  }
+  
+  // 5. Tentar extrair de forma mais genérica
+  // Procurar palavras que parecem nomes de navios
+  for (const line of record.rawText) {
+    const navioCandidatos = line.split(/\s+/).filter(word => 
+      word.length > 2 && 
+      /^[A-Z]/.test(word) && 
+      !/^\d+/.test(word) && 
+      !TOMADORES_CONHECIDOS.includes(word) &&
+      !FUNCOES_VALIDAS.includes(word) &&
+      !TURNOS_VALIDOS.includes(word) &&
+      word !== "00"
+    );
+    
+    if (navioCandidatos.length >= 1) {
+      return cleanShipName(navioCandidatos.join(' '));
+    }
+  }
+  
+  // Se todas as abordagens falharem
+  return "NAVIO NÃO IDENTIFICADO";
+};
+
+// Versão modificada de processStructuredRecord que implementa a extração de navio simplificada
 const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
   // Obter o texto completo da primeira linha (onde estão dia, folha, tomador)
   const firstLineText = record.rawText[0];
@@ -658,6 +812,9 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
   
   // Extrair tomador usando a função melhorada
   const tomador = extractTomador(record);
+  
+  // Extrair o nome do navio com a abordagem simplificada
+  const pasta = extractShipName(record);
   
   // Combinar todas as linhas em um único texto para processamento
   const combinedText = record.rawText.join(' ');
@@ -712,40 +869,11 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
     }
   }
   
-  // Estratégia D: Usar a posição dos valores numéricos para estimar
+  // Se ainda não encontramos, usar uma abordagem de busca direta de funções
   if (funIndex === -1) {
-    // Identificar onde começam os valores numéricos (geralmente são 13 valores)
-    const numericIndices: number[] = [];
-    
     for (let i = 0; i < parts.length; i++) {
-      if (/^[\d.,]+$/.test(parts[i])) {
-        numericIndices.push(i);
-      }
-    }
-    
-    // Os 13 últimos valores numéricos devem ser os campos de valores
-    if (numericIndices.length >= 13) {
-      // Pegar o índice do primeiro valor dos últimos 13
-      const firstNumericIndex = numericIndices[numericIndices.length - 13];
-      
-      // A sequência fun, tur, ter, pagto deve estar antes
-      if (firstNumericIndex > 4) {
-        funIndex = firstNumericIndex - 4; // 4 posições antes dos valores
-      }
-    }
-  }
-  
-  // Estratégia E: Se todas as outras falharem, fazer uma estimativa
-  if (funIndex === -1) {
-    const textWithoutHeader = parts.slice(4).join(' ');
-    
-    // Procurar por padrões conhecidos
-    for (const fun of FUNCOES_VALIDAS) {
-      const funPos = textWithoutHeader.indexOf(` ${fun} `);
-      if (funPos !== -1) {
-        // Contar palavras até esta posição
-        const wordsBefore = textWithoutHeader.substring(0, funPos).split(/\s+/).filter(w => w.length > 0).length;
-        funIndex = 4 + wordsBefore;
+      if (FUNCOES_VALIDAS.includes(parts[i])) {
+        funIndex = i;
         break;
       }
     }
@@ -758,84 +886,6 @@ const processStructuredRecord = (record: StructuredRecord): Trabalho | null => {
   
   // Garantir que funIndex está dentro dos limites
   funIndex = Math.max(4, Math.min(funIndex, parts.length - 4));
-  
-  // Extrair o nome do navio (pasta)
-  let pasta = '';
-  
-  // Abordagem 1: Usar a identificação da coluna do nome do navio
-  const shipNameColumn = identifyShipNameColumn(record.lines);
-  if (shipNameColumn) {
-    const shipTexts = [];
-    for (const line of record.lines) {
-      const shipText = extractTextFromShipColumn(line, shipNameColumn);
-      if (shipText && shipText.trim().length > 0) {
-        shipTexts.push(shipText);
-      }
-    }
-    
-    // Juntar todos os textos e limpar
-    if (shipTexts.length > 0) {
-      pasta = cleanShipName(shipTexts.join(' '));
-    }
-  }
-  
-  // Abordagem 2: Procurar padrões específicos
-  if (!pasta || pasta.length < 3) {
-    // Procurar por "(PORTO NOVO)" ou "(ESTALEIRO)"
-    const portoNovoMatch = combinedText.match(/([A-Z][A-Z\s]+)(?=\s+\(PORTO\s+NOVO\))/i);
-    const estaleiroMatch = combinedText.match(/([A-Z][A-Z\s]+)(?=\s+\(ESTALEIRO\))/i);
-    
-    if (portoNovoMatch && portoNovoMatch[1].length > 3) {
-      pasta = cleanShipName(portoNovoMatch[1].trim() + ' (PORTO NOVO)');
-    }
-    else if (estaleiroMatch && estaleiroMatch[1].length > 3) {
-      pasta = cleanShipName(estaleiroMatch[1].trim() + ' (ESTALEIRO)');
-    }
-  }
-  
-  // Abordagem 3: Texto entre tomador e função
-  if (!pasta || pasta.length < 3) {
-    const tomadorIndex = combinedText.indexOf(tomador);
-    if (tomadorIndex !== -1) {
-      // Texto após o tomador
-      const afterTomador = combinedText.substring(tomadorIndex + tomador.length);
-      
-      // Procurar pela primeira ocorrência de função
-      let funPos = afterTomador.length;
-      for (const fun of FUNCOES_VALIDAS) {
-        const pos = afterTomador.indexOf(fun);
-        if (pos !== -1 && pos < funPos) {
-          funPos = pos;
-        }
-      }
-      
-      if (funPos < afterTomador.length) {
-        const between = afterTomador.substring(0, funPos).trim();
-        pasta = cleanShipName(between);
-      }
-    }
-  }
-  
-  // Última alternativa: pegar texto entre folha e função
-  if (!pasta || pasta.length < 3) {
-    // Pular dia, folha e remover tomador
-    let shipParts = [];
-    for (let i = 4; i < funIndex; i++) {
-      if (!parts[i].includes(tomador)) {
-        shipParts.push(parts[i]);
-      }
-    }
-    
-    if (shipParts.length > 0) {
-      pasta = cleanShipName(shipParts.join(' '));
-    }
-  }
-  
-  // Se o pasta ainda estiver vazio, usar um valor padrão
-  if (!pasta || pasta.length < 3) {
-    pasta = "NAVIO NÃO IDENTIFICADO";
-    console.log(`AVISO: Nome do navio não identificado para o trabalho dia ${dia}, folha ${folha}`);
-  }
   
   // 4. Extrair fun, tur, ter, pagto
   const fun = funIndex < parts.length ? parts[funIndex] : '';
