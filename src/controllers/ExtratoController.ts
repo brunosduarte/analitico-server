@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { PDFService } from '../services/PDFService';
 import { z } from 'zod';
 import ExtratoModel from '../models/ExtratoModel';
+import { canAccessExtrato } from '../middlewares/roleMiddleware'; // Importar o middleware
 
 export class ExtratoController {
   static async uploadExtratoAnalitico(req: Request, res: Response) {
@@ -14,6 +15,25 @@ export class ExtratoController {
       
       // Processa o arquivo PDF
       const dadosExtrato = await PDFService.processarExtratoPDF(filePath);
+      
+      // Verificar se o usuário pode acessar este extrato baseado em sua categoria
+      if (req.user && req.user.role !== 'admin' && req.user.role !== 'desenvolvedor') {
+        const categoriaMap: Record<string, string> = {
+          'estivador': 'ESTIVADOR',
+          'arrumador': 'ARRUMADOR',
+          'conferente': 'CONFERENTE',
+          'vigia': 'VIGIA'
+        };
+        
+        const categoriaUsuario = categoriaMap[req.user.role];
+        
+        if (categoriaUsuario !== dadosExtrato.categoria) {
+          return res.status(403).json({ 
+            success: false, 
+            message: 'Você não tem permissão para fazer upload de extratos desta categoria' 
+          });
+        }
+      }
       
       return res.status(200).json({
         success: true,
@@ -61,13 +81,27 @@ export class ExtratoController {
       if (nome) filtros.nome = { $regex: nome, $options: 'i' };
       if (mes) filtros.mes = mes;
       if (ano) filtros.ano = ano;
-      if (categoria) filtros.categoria = categoria;
+      
+      // Adicionar filtro de categoria baseado no papel do usuário
+      if (req.user && req.user.role !== 'admin' && req.user.role !== 'desenvolvedor') {
+        const categoriaMap: Record<string, string> = {
+          'estivador': 'ESTIVADOR',
+          'arrumador': 'ARRUMADOR',
+          'conferente': 'CONFERENTE',
+          'vigia': 'VIGIA'
+        };
+        
+        filtros.categoria = categoriaMap[req.user.role];
+      } else if (categoria) {
+        filtros.categoria = categoria;
+      }
       
       // Se há filtro por tomador, precisamos ajustar a consulta
       let extratos;
       if (tomador) {
         extratos = await ExtratoModel.find({
-          "trabalhos.tomador": tomador
+          "trabalhos.tomador": tomador,
+          ...filtros
         });
       } else {
         extratos = await PDFService.obterExtratos(filtros);
@@ -102,6 +136,25 @@ export class ExtratoController {
       
       if (!extrato) {
         return res.status(404).json({ success: false, message: 'Extrato não encontrado' });
+      }
+      
+      // Verificar se o usuário tem permissão para acessar este extrato
+      if (req.user && req.user.role !== 'admin' && req.user.role !== 'desenvolvedor') {
+        const categoriaMap: Record<string, string> = {
+          'estivador': 'ESTIVADOR',
+          'arrumador': 'ARRUMADOR',
+          'conferente': 'CONFERENTE',
+          'vigia': 'VIGIA'
+        };
+        
+        const categoriaUsuario = categoriaMap[req.user.role];
+        
+        if (categoriaUsuario !== extrato.categoria) {
+          return res.status(403).json({ 
+            success: false, 
+            message: 'Você não tem permissão para acessar este extrato' 
+          });
+        }
       }
       
       return res.status(200).json({

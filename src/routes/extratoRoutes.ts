@@ -2,6 +2,8 @@ import { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import { ExtratoController } from '../controllers/ExtratoController';
+import { authMiddleware, twoFactorAuth } from '../middlewares/authMiddleware';
+import { canAccessExtrato } from '../middlewares/roleMiddleware';
 
 // Configuração do Multer para upload de arquivos
 const storage = multer.diskStorage({
@@ -37,6 +39,9 @@ const upload = multer({
 
 const router = Router();
 
+// Aplicar middleware de autenticação e 2FA a todas as rotas
+router.use(authMiddleware, twoFactorAuth);
+
 // Rota para upload de extrato analítico
 router.post('/analitico', upload.single('arquivo'), ExtratoController.uploadExtratoAnalitico);
 
@@ -44,7 +49,7 @@ router.post('/analitico', upload.single('arquivo'), ExtratoController.uploadExtr
 router.get('/analitico', ExtratoController.listarExtratos);
 
 // Rota para obter um extrato específico por ID
-router.get('/analitico/:id', ExtratoController.obterExtratoPorId);
+router.get('/analitico/:id', canAccessExtrato, ExtratoController.obterExtratoPorId);
 
 // Rota para obter trabalhos por tomador
 router.get('/trabalhos/tomador/:tomador', ExtratoController.obterTrabalhosPorTomador);

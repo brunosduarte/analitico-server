@@ -1,8 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import session from 'express-session';
+import MongoStore from 'connect-mongo';
+import cookieParser from 'cookie-parser';
 import { connectDB } from './config/database';
 import extratoRoutes from './routes/extratoRoutes';
+import authRoutes from './routes/authRoutes';
 
 // Carrega variáveis de ambiente
 dotenv.config();
@@ -14,10 +18,31 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Middlewares
-app.use(cors());
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true
+}));
 app.use(express.json());
+app.use(cookieParser());
+
+// Configuração de sessão
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'extratos-portuarios-session-secret',
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({ 
+    mongoUrl: process.env.MONGODB_URI || 'mongodb://localhost:27017/extratos_portuarios',
+    collectionName: 'sessions'
+  }),
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 1 dia
+  }
+}));
 
 // Rotas
+app.use('/auth', authRoutes); // Adicionar rotas de autenticação
 app.use('/', extratoRoutes);
 
 // Rota de verificação de saúde
